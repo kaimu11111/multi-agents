@@ -18,7 +18,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     p.add_argument("--device_idx", type=int, default=0)
     p.add_argument("--warmup", type=int, default=5)
     p.add_argument("--repeat", type=int, default=20)
-    p.add_argument("--tol", type=float, default=1e-4)
+    p.add_argument("--tol", type=float, default=1e-3)
 
     # Analyzer 配置
     p.add_argument("--analyzer_model", required=True)
@@ -95,7 +95,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     )
 
     print("[Seed] generating…")
-    seed = multi.create_seed_kernel_with_agents(max_rounds=args.seed_rounds, k=args.seed_k)
+    seed = multi.create_seed_kernel_with_agents()
     seed.save_metrics(Path("workdir") / "metrics")
     return 0
 

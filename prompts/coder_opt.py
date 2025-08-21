@@ -1,4 +1,3 @@
-# prompts/coder_prompt.py
 from __future__ import annotations
 import importlib.util
 import importlib.machinery
@@ -8,71 +7,56 @@ import sys
 import json
 from typing import List, Optional, Tuple
 ROOT = Path(__file__).resolve().parents[1]
-FEWSHOT_BASE = ROOT / "prompts/few_shot/model_ex_add.py"   # original Model
-FEWSHOT_NEW = ROOT / "prompts/few_shot/model_new_ex_add.py"  # optimised ModelNew
-# Paths
+
 
 HW_FILE = ROOT / "prompts" / "hardware" / "gpu_specs.py"
 
 CODER_SYSTEM = """\
 You are a senior CUDA-kernel optimisation specialist. Your job is to generate a high-quality,
-compilable, and runnable Python script that builds and launches **hand-written CUDA kernels**.
-
+compilable, and runnable Python script that builds and launches **hand-written CUDA kernels**
+according to the provided STRATEGIES and Current kernel code. Prioritise correctness first,
+then baseline performance. Respect the architecture's I/O signatures. 
 
 IMPORTANT:
 Do not think too much. Think a little then give the one—fenced Python block.
-The output must be exactly one fenced code block starting with ```python and ending with ```.
-```python
-# <complete ModelNew code>
-```
 """
 
-
 # New user template with strict ModelNew requirements and optional few-shot example
-CODER_USER_TMPL ="""
+CODER_USER_TMPL = """\
 You are a CUDA‑kernel optimisation specialist.
 Target GPU: **NVIDIA {gpu_name} ({gpu_arch})**
 {gpu_items}
 
 Task
 ----
-Generate **hand‑written CUDA kernels** that replace *all* PyTorch operator(s)
-inside the original `class Model` (shown later).  You may fuse multiple
-operators into a single kernel if that yields better performance.  Leave any
-non‑replaced parts of the model unchanged.
+Optimize the **current CUDA kernel** by applying the given strategies.
+Preserve correctness and keep all unrelated parts of the code unchanged.
 
-OUTPUT RULES (STRICT) ────────────────────────────────────────────────
-1. Reply with **one—and only one—fenced Python block**.  No prose.
-2. The block must be directly runnable:
-       python model_new.py
-3. Inside the block, follow **exactly** this order:
-   1. Imports – `torch`, `torch.nn`, `load_inline`.
-   2. `source` – triple‑quoted CUDA string(s) (kernel + host wrapper).
-   3. `cpp_src` – prototypes for *all* kernels you expose.
-   4. **One** `load_inline` call per kernel group.
-   5. `class ModelNew(nn.Module)` – mirrors original inputs/outputs but calls
-      your CUDA kernels.
-4. **Do NOT include** testing code, `if __name__ == "__main__"`, or extra prose.
-
-Few‑shot example (reference only – do **not** echo):
-**Original**
-```python
-{few_base}
-```
-**Optimised**
-```python
-{few_new}
-```
+[STRATEGIES JSON]
+{strategies_json}
 
 Target architecture (to optimise):
 ```python
-{arch_src}
+{arch_file_content}
 ```
-Now output **only** the complete, runnable `ModelNew` script that satisfies
-**ALL OUTPUT RULES (STRICT)** above.
+
+
+OUTPUT RULES (STRICT)
+──────────────────────────────────────────────
+1. Reply with **one—and only one—fenced Python block**. No prose.
+2. Inside the block, follow **exactly** this order:
+   1. Imports – `torch`, `torch.nn`, and `load_inline` (or cpp_extension if you choose).
+   2. `source` – triple‑quoted CUDA string(s) (kernel + host wrapper/launcher).
+   3. `cpp_src` – C++ prototypes for *all* kernels you expose.
+   4. **Exactly one** load/compile call (e.g., `load_inline`).
+   5. `class ModelNew(nn.Module)` – mirrors original inputs/outputs but calls your CUDA kernels.
+3. Handle boundary conditions and alignment safely (fallback to scalar path if misaligned).
+4. **Do NOT include** testing code, logging/prints, `if __name__ == "__main__"`, or extra prose.
+
+
 # ==========================================================
 # OUTPUT FORMAT – copy verbatim
-Return **exactly one** fenced block labelled `python`.  No text before or after.
+Return **exactly one** fenced block labelled `python`. No text before or after.
 Use this skeleton (the model must fill it):
 
 ```python
@@ -96,10 +80,15 @@ def _load_gpu_info(gpu_name: str) -> tuple[str, str]:
     items = "\n".join(f"• {k}: {v}" for k, v in info.items() if k != "GPU Architecture")
     return gpu_arch, items
 
-def build_coder_prompts(
+def _read_text(path: str | Path, encoding: str = "utf-8") -> str:
+    return Path(path).read_text(encoding=encoding)
+
+def build_coder_opt_prompts(
     *,
     gpu_name: str,
     arch_path: str | Path,
+    strategies: List[str] | dict,
+    arch_encoding: str = "utf-8",
 ) -> Tuple[str, str]:
     """
     Build (system_prompt, user_prompt) for the Coder with strict ModelNew output rules.
@@ -117,18 +106,20 @@ def build_coder_prompts(
         (system_prompt, user_prompt)
     """
     gpu_arch, gpu_items = _load_gpu_info(gpu_name)
-    arch_src = Path(arch_path).read_text().strip()
-    few_base = FEWSHOT_BASE.read_text().strip()
-    few_new = FEWSHOT_NEW.read_text().strip()
+    arch_src = _read_text(arch_path, encoding=arch_encoding)
+
+    if isinstance(strategies, dict):
+        strategies_json = json.dumps(strategies, ensure_ascii=False, indent=2)
+    else:
+        strategies_json = json.dumps({"strategies": [str(s) for s in strategies]}, ensure_ascii=False, indent=2)
+
 
 
     user = CODER_USER_TMPL.format(
         gpu_name=gpu_name,
         gpu_arch=gpu_arch,
         gpu_items=gpu_items,
-        few_base=few_base,
-        few_new=few_new,
-        arch_src=arch_src,
+        arch_file_content=arch_src,
+        strategies_json=strategies_json,
     )
     return CODER_SYSTEM, dedent(user)
-

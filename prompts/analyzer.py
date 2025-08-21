@@ -30,7 +30,7 @@ __all__ = [
 ]
 
 
-PROMPT_SEED_SYSTEM = """\
+PROMPT_OPT_SYSTEM = """\
 You are a senior GPU performance analyst and CUDA kernel optimization advisor.
 Task: Based on the provided GPU/architecture information and context, produce a set of strategies for generating the first seed kernel.
 Goal: The resulting kernel should compile, run correctly, and provide a reasonable baseline performance (not maximum performance).
@@ -41,15 +41,13 @@ Rules:
 3. Seed focus: Prefer high-value, low-risk, easy-to-implement "foundation" strategies.
 4. Hardware awareness: Use gpu_name/arch_path context to suggest concrete parameters (tile/block sizes, vector widths, double-buffering, etc.).
 5. Deduplication: Do not include strategies that conflict with or duplicate any in existing_strategies.
-6. Prefix each strategy with tags to help deduplication, e.g.:
-   [tiling] [smem] [vectorize] [coalesce] [double-buffer] [broadcast] [unroll] [occupancy] [align] [guard] [grid] [sync] [layout]
-   
+
 IMPORTANT:
-Do not think too much.
+Do not think too much. Think a little then give the Strategies list.
 """
 
 # Placeholders: {gpu_name} {arch_path} {k} {round_idx} {max_rounds} {existing_strategies_json} {arch_file_content}
-PROMPT_SEED_USER = """\
+PROMPT_OPT_USER = """\
 # MODE: seed
 GPU: {gpu_name}
 k: {k}
@@ -131,7 +129,7 @@ def render_seed_prompt(
     """
     arch_src = Path(arch_path).read_text().strip()
 
-    return PROMPT_SEED_USER.format(
+    return PROMPT_OPT_USER.format(
         gpu_name=gpu_name,
         k=k,
         round_idx=round_idx,
@@ -141,7 +139,7 @@ def render_seed_prompt(
     )
 
 
-def build_seed_messages(
+def build_opt_messages(
     *,
     gpu_name: str,
     arch_path: str,
@@ -161,4 +159,4 @@ def build_seed_messages(
         existing_strategies=existing_strategies,
         encoding=encoding,
     )
-    return PROMPT_SEED_SYSTEM, user
+    return PROMPT_OPT_SYSTEM, user

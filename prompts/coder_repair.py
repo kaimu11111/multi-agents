@@ -6,18 +6,18 @@ from pathlib import Path
 from textwrap import dedent
 import sys
 import json
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Dict, Union
 ROOT = Path(__file__).resolve().parents[1]
-FEWSHOT_BASE = ROOT / "prompts/few_shot/model_ex_add.py"   # original Model
-FEWSHOT_NEW = ROOT / "prompts/few_shot/model_new_ex_add.py"  # optimised ModelNew
-# Paths
+
 
 HW_FILE = ROOT / "prompts" / "hardware" / "gpu_specs.py"
 
-CODER_SYSTEM = """\
-You are a senior CUDA-kernel optimisation specialist. Your job is to generate a high-quality,
-compilable, and runnable Python script that builds and launches **hand-written CUDA kernels**.
-
+CODER_REPAIR_SYSTEM = """\
+You are a senior CUDA-kernel correctness engineer. Your job is to generate a high-quality,
+**compilable and runnable** Python script that builds and launches hand-written CUDA code
+by **repairing the CURRENT kernel**. Apply only the provided fixes/error context. Do not
+introduce performance optimizations or architectural changes. Prioritize correctness and
+compilation. Preserve public APIs/signatures and any unrelated logic.
 
 IMPORTANT:
 Do not think too much. Think a little then give the one—fenced Python block.
@@ -36,10 +36,9 @@ Target GPU: **NVIDIA {gpu_name} ({gpu_arch})**
 
 Task
 ----
-Generate **hand‑written CUDA kernels** that replace *all* PyTorch operator(s)
-inside the original `class Model` (shown later).  You may fuse multiple
-operators into a single kernel if that yields better performance.  Leave any
-non‑replaced parts of the model unchanged.
+Repair the **current CUDA kernel** using the given context. Make the **minimal** changes
+needed to compile and run correctly. Do not change public APIs or behavior; avoid any
+performance tuning.
 
 OUTPUT RULES (STRICT) ────────────────────────────────────────────────
 1. Reply with **one—and only one—fenced Python block**.  No prose.
@@ -54,19 +53,15 @@ OUTPUT RULES (STRICT) ───────────────────�
       your CUDA kernels.
 4. **Do NOT include** testing code, `if __name__ == "__main__"`, or extra prose.
 
-Few‑shot example (reference only – do **not** echo):
-**Original**
-```python
-{few_base}
-```
-**Optimised**
-```python
-{few_new}
-```
+[EXISTING_ERRORS JSON]
+{existing_errors_json}
 
-Target architecture (to optimise):
+[METRICS JSON]
+{metrics_json}
+
+Current kernel to repair (verbatim):
 ```python
-{arch_src}
+{current_kernel_src}
 ```
 Now output **only** the complete, runnable `ModelNew` script that satisfies
 **ALL OUTPUT RULES (STRICT)** above.
@@ -80,6 +75,7 @@ Use this skeleton (the model must fill it):
 ```
 # ==========================================================
 """
+
 
 def _load_gpu_info(gpu_name: str) -> tuple[str, str]:
     """Return (arch, formatted_items) from prompts/hardware/gpu_specs.py"""
@@ -96,39 +92,48 @@ def _load_gpu_info(gpu_name: str) -> tuple[str, str]:
     items = "\n".join(f"• {k}: {v}" for k, v in info.items() if k != "GPU Architecture")
     return gpu_arch, items
 
-def build_coder_prompts(
+
+def _read_text(path: str | Path, encoding: str = "utf-8") -> str:
+    return Path(path).read_text(encoding=encoding)
+
+
+def build_coder_repair_prompts(
     *,
     gpu_name: str,
-    arch_path: str | Path,
+    current_kernel_path: str | Path,
+    existing_errors: Union[List[str], Dict[str, object], None] = None,
+    metrics: Optional[Dict[str, object]] = None,
+    kernel_encoding: str = "utf-8",
 ) -> Tuple[str, str]:
     """
-    Build (system_prompt, user_prompt) for the Coder with strict ModelNew output rules.
+    Build (system_prompt, user_prompt) for the Repair Coder with strict output rules.
 
     Args:
         gpu_name: GPU name key in GPU_SPEC_INFO.
-        arch_path: path to the architecture .py file (embedded verbatim).
-        strategies: list of strategy strings OR a dict like {"strategies":[...], ...}
-        arch_encoding: file encoding for the architecture file.
-        few_base: optional few-shot "Original" example (Python code string).
-        few_new: optional few-shot "Optimised" example (Python code string).
-        history_block: optional context of existing kernels (any text/code to show differences).
+        current_kernel_path: path to the current kernel file (embedded verbatim).
+        existing_errors: list of known errors OR dict (JSON-serialized).
+        metrics: metrics/result dict providing context.
+        kernel_encoding: file encoding for the kernel file.
 
     Returns:
         (system_prompt, user_prompt)
     """
     gpu_arch, gpu_items = _load_gpu_info(gpu_name)
-    arch_src = Path(arch_path).read_text().strip()
-    few_base = FEWSHOT_BASE.read_text().strip()
-    few_new = FEWSHOT_NEW.read_text().strip()
+    kernel_src = _read_text(current_kernel_path, encoding=kernel_encoding)
 
+    if isinstance(existing_errors, dict) or existing_errors is None:
+        existing_errors_json = json.dumps(existing_errors or [], ensure_ascii=False, indent=2)
+    else:
+        existing_errors_json = json.dumps([str(e) for e in existing_errors], ensure_ascii=False, indent=2)
+
+    metrics_json = json.dumps(metrics or {}, ensure_ascii=False, indent=2)
 
     user = CODER_USER_TMPL.format(
         gpu_name=gpu_name,
         gpu_arch=gpu_arch,
         gpu_items=gpu_items,
-        few_base=few_base,
-        few_new=few_new,
-        arch_src=arch_src,
+        current_kernel_src=kernel_src,
+        existing_errors_json=existing_errors_json,
+        metrics_json=metrics_json,
     )
-    return CODER_SYSTEM, dedent(user)
-
+    return CODER_REPAIR_SYSTEM, dedent(user)
