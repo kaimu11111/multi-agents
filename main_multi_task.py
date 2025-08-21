@@ -196,7 +196,7 @@ def main(argv: Optional[list[str]] = None) -> int:
                 # 0 轮：只生成 seed
                 print("[SEED] Initializing with seed kernel…")
                 current = multi.create_seed_kernel_with_agents()
-                current.save_metrics(metrics_dir, round_idx=round_idx)
+                current.save_metrics(metrics_dir)
 
             else:
                 # 后续轮次：根据 runnable 决定 repair / optimize
@@ -211,7 +211,7 @@ def main(argv: Optional[list[str]] = None) -> int:
                     print(f"[Round {round_idx}] Current kernel is NOT runnable → repairing…")
                     current = multi.repair_step()
 
-                current.save_metrics(metrics_dir, round_idx=round_idx)
+                current.save_metrics(metrics_dir)
 
                             
         # 记录 best（稳妥判空）

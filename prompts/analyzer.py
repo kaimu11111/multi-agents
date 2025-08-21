@@ -21,7 +21,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import List
 import json
+import importlib.util
+import sys
 
+ROOT = Path(__file__).resolve().parents[1]
+
+
+HW_FILE = ROOT / "prompts" / "hardware" / "gpu_specs.py"
 __all__ = [
     "PROMPT_SEED_SYSTEM",
     "PROMPT_SEED_USER",
@@ -49,7 +55,8 @@ Do not think too much. Think a little then give the Strategies list.
 # Placeholders: {gpu_name} {arch_path} {k} {round_idx} {max_rounds} {existing_strategies_json} {arch_file_content}
 PROMPT_OPT_USER = """\
 # MODE: seed
-GPU: {gpu_name}
+Target GPU: **NVIDIA {gpu_name} ({gpu_arch})**
+{gpu_items}
 k: {k}
 round_idx: {round_idx}
 max_rounds: {max_rounds}
@@ -91,6 +98,20 @@ Example topics (seed scope):
 
 """
 
+def _load_gpu_info(gpu_name: str) -> tuple[str, str]:
+    """Return (arch, formatted_items) from prompts/hardware/gpu_specs.py"""
+    spec = importlib.util.spec_from_file_location("gpu_specs", HW_FILE)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["gpu_specs"] = module
+    assert spec and spec.loader
+    spec.loader.exec_module(module)  # type: ignore
+    gpu_info = getattr(module, "GPU_SPEC_INFO")
+    if gpu_name not in gpu_info:
+        raise KeyError(f"GPU '{gpu_name}' not found in GPU_SPEC_INFO")
+    info = gpu_info[gpu_name]
+    gpu_arch = info.get("GPU Architecture", "Unknown")
+    items = "\n".join(f"• {k}: {v}" for k, v in info.items() if k != "GPU Architecture")
+    return gpu_arch, items
 
 def render_seed_prompt(
     *,
@@ -128,9 +149,11 @@ def render_seed_prompt(
         A formatted user prompt string ready to send to the LLM.
     """
     arch_src = Path(arch_path).read_text().strip()
-
+    gpu_arch, gpu_items = _load_gpu_info(gpu_name)
     return PROMPT_OPT_USER.format(
         gpu_name=gpu_name,
+        gpu_arch=gpu_arch,
+        gpu_items=gpu_items,
         k=k,
         round_idx=round_idx,
         max_rounds=max_rounds,

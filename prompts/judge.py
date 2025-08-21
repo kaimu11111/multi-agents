@@ -2,6 +2,13 @@ from __future__ import annotations
 import json
 from typing import List, Tuple
 from pathlib import Path
+import importlib.util
+import sys
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+HW_FILE = ROOT / "prompts" / "hardware" / "gpu_specs.py"
 PROMPT_JUDGE_OPT_SYSTEM = """\
 You are a decision maker for CUDA kernel seed generation.
 Given the current list of candidate strategies, decide whether we should gather MORE strategies 
@@ -23,7 +30,8 @@ Be concise. No Markdown, no extra text.
 
 PROMPT_JUDGE_OPT_USER = """\
 # MODE: seed (Judge)
-GPU: {gpu_name}
+Target GPU: **NVIDIA {gpu_name} ({gpu_arch})**
+{gpu_items}
 round_idx: {round_idx}
 max_rounds: {max_rounds}
 k: {k}
@@ -46,6 +54,20 @@ Return ONLY JSON:
 }}
 ```
 """
+def _load_gpu_info(gpu_name: str) -> tuple[str, str]:
+    """Return (arch, formatted_items) from prompts/hardware/gpu_specs.py"""
+    spec = importlib.util.spec_from_file_location("gpu_specs", HW_FILE)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["gpu_specs"] = module
+    assert spec and spec.loader
+    spec.loader.exec_module(module)  # type: ignore
+    gpu_info = getattr(module, "GPU_SPEC_INFO")
+    if gpu_name not in gpu_info:
+        raise KeyError(f"GPU '{gpu_name}' not found in GPU_SPEC_INFO")
+    info = gpu_info[gpu_name]
+    gpu_arch = info.get("GPU Architecture", "Unknown")
+    items = "\n".join(f"• {k}: {v}" for k, v in info.items() if k != "GPU Architecture")
+    return gpu_arch, items
 
 def render_judge_opt_prompt(
     *,
@@ -59,8 +81,11 @@ def render_judge_opt_prompt(
 ) -> str:
     """Render the user prompt by reading the full file at `arch_path` and embedding it verbatim."""
     arch_text = Path(arch_path).read_text(encoding=encoding)
+    gpu_arch, gpu_items = _load_gpu_info(gpu_name)
     return PROMPT_JUDGE_OPT_USER.format(
         gpu_name=gpu_name,
+        gpu_arch=gpu_arch,
+        gpu_items=gpu_items,
         round_idx=round_idx,
         max_rounds=max_rounds,
         k=k,
