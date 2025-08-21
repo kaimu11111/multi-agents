@@ -1,0 +1,6 @@
+{
+  "runnable": false,
+  "phase": "seed",
+  "error_type": "BenchmarkError",
+  "message": "Traceback (most recent call last):\n  File \"/home/wan00559/three_agents/scripts/multi_agent.py\", line 296, in optimize_step\n    metrics = compare_and_bench(\n              ^^^^^^^^^^^^^^^^^^\n  File \"/home/wan00559/three_agents/utils/compile_and_run.py\", line 197, in compare_and_bench\n    test_mod, _ = _capture_import(test_py)\n                  ^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/wan00559/three_agents/utils/compile_and_run.py\", line 98, in _capture_import\n    raise CompilationError(full_log) from None\nutils.compile_and_run.CompilationError: /home/wan00559/miniconda3/envs/maxk/lib/python3.11/site-packages/torch/utils/cpp_extension.py:2356: UserWarning: TORCH_CUDA_ARCH_LIST is not set, all archs for visible cards are included for compilation. \nIf this is not desired, please set os.environ['TORCH_CUDA_ARCH_LIST'].\n  warnings.warn(\ndynamic module does not define module export function (PyInit_matmul_opt)\n"
+}

@@ -1,0 +1,265 @@
+[Agent]: coder
+=== System Prompt ===
+You are a senior CUDA-kernel correctness engineer. Your job is to generate a high-quality,
+**compilable and runnable** Python script that builds and launches hand-written CUDA code
+by **repairing the CURRENT kernel**. Apply only the provided fixes/error context. Do not
+introduce performance optimizations or architectural changes. Prioritize correctness and
+compilation. Preserve public APIs/signatures and any unrelated logic.
+
+IMPORTANT:
+Do not think too much. Think a little then give the one—fenced Python block.
+The output must be exactly one fenced code block starting with ```python and ending with ```.
+```python
+# <complete ModelNew code>
+```
+
+=== User Prompt ===
+You are a CUDA‑kernel optimisation specialist.
+Target GPU: **NVIDIA Quadro RTX 6000 (Turing)**
+• GPU Memory: 24GB GDDR6 with ECC
+• Memory Bandwidth: 624 GB/s
+• FP32 TFLOPS: 16.3
+• TF32 Tensor Core TFLOPS: — (Turing 不支持 TF32)
+• FP16 Tensor Core TFLOPS: 261 (522 with sparsity)*
+• FP8 Tensor Core TFLOPS: — (不支持 FP8)
+• INT8 Tensor Core TOPS: 261 (522 with sparsity)*
+• Register File Size: 64K 32-bit registers per SM
+• Maximum number of registers per thread: 255
+• Maximum number of thread blocks per SM: 32
+• Shared memory capacity per SM: 64 KB
+• Maximum shared memory per thread block: 64 KB
+
+Task
+----
+Repair the **current CUDA kernel** using the given context. Make the **minimal** changes
+needed to compile and run correctly. Do not change public APIs or behavior; avoid any
+performance tuning.
+
+OUTPUT RULES (STRICT) ────────────────────────────────────────────────
+1. Reply with **one—and only one—fenced Python block**.  No prose.
+2. The block must be directly runnable:
+       python model_new.py
+3. Inside the block, follow **exactly** this order:
+   1. Imports – `torch`, `torch.nn`, `load_inline`.
+   2. `source` – triple‑quoted CUDA string(s) (kernel + host wrapper).
+   3. `cpp_src` – prototypes for *all* kernels you expose.
+   4. **One** `load_inline` call per kernel group.
+   5. `class ModelNew(nn.Module)` – mirrors original inputs/outputs but calls
+      your CUDA kernels.
+4. **Do NOT include** testing code, `if __name__ == "__main__"`, or extra prose.
+
+[EXISTING_ERRORS JSON]
+[
+  "SyntaxError: Unexpected indentation in Python code (line 2: '        import torch.nn as nn')"
+]
+
+[METRICS JSON]
+{
+  "runnable": false,
+  "phase": "seed",
+  "error_type": "BenchmarkError",
+  "message": "Traceback (most recent call last):\n  File \"/home/wan00559/three_agents/scripts/multi_agent.py\", line 203, in create_seed_kernel_with_agents\n    metrics = compare_and_bench(\n              ^^^^^^^^^^^^^^^^^^\n  File \"/home/wan00559/three_agents/utils/compile_and_run.py\", line 197, in compare_and_bench\n    test_mod, _ = _capture_import(test_py)\n                  ^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/wan00559/three_agents/utils/compile_and_run.py\", line 98, in _capture_import\n    raise CompilationError(full_log) from None\nutils.compile_and_run.CompilationError: unexpected indent (kernel_20250820_215100.py, line 2)\n"
+}
+
+Current kernel to repair (verbatim):
+```python
+import torch
+        import torch.nn as nn
+        from torch.utils.cpp_extension import load_inline
+
+        source = """
+        #include <torch/extension.h>
+        #include <cuda_runtime.h>
+
+        __global__ void matmul3d_kernel(const float* A, const float* B, float* C, int N, int M, int K, int L) {
+            int blockId = blockIdx.x;
+            int n = blockId / M;
+            int m = blockId % M;
+            int l = threadIdx.x;
+            if (l >= L) return;
+
+            extern __shared__ float shared_data[];
+            float* shared_A = shared_data;
+            float* shared_B = shared_data + K;
+
+            // Load A_row into shared_A.
+            for (int k = threadIdx.x; k < K; k += blockDim.x) {
+                shared_A[k] = A[n * M * K + m * K + k];
+            }
+
+            // Load B_col into shared_B.
+            for (int k = threadIdx.x; k < K; k += blockDim.x) {
+                shared_B[k] = B[k * L + l];
+            }
+
+            __syncthreads();
+
+            float sum = 0.0f;
+            for (int k = 0; k < K; ++k) {
+                sum += shared_A[k] * shared_B[k];
+            }
+
+            C[n * M * L + m * L + l] = sum;
+        }
+
+        torch::Tensor matmul3d_cuda(torch::Tensor A, torch::Tensor B) {
+            int N = A.size(0);
+            int M = A.size(1);
+            int K = A.size(2);
+            int L = B.size(1);
+
+            auto C = torch::empty({N, M, L}, A.options());
+
+            dim3 blocks(N * M);
+            dim3 threads(L);
+            size_t shared_mem = 2 * K * sizeof(float);
+
+            matmul3d_kernel<<<blocks, threads, shared_mem, at::cuda::getCurrentCUDAStream()>>>(
+                A.data_ptr<float>(), B.data_ptr<float>(), C.data_ptr<float>(), N, M, K, L
+            );
+
+            return C;
+        }
+        """
+
+        cpp_src = (
+            "torch::Tensor matmul3d_cuda(torch::Tensor A, torch::Tensor B);"
+        )
+
+        matmul3d = load_inline(
+            name="matmul3d",
+            cpp_sources=cpp_src,
+            cuda_sources=source,
+            functions=["matmul3d_cuda"],
+            verbose=True,
+            extra_cflags=["-O3"],
+            extra_ldflags=[""],
+        )
+
+        class ModelNew(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.matmul3d = matmul3d
+
+            def forward(self, A, B):
+                return self.matmul3d.matmul3d_cuda(A, B)
+
+```
+Now output **only** the complete, runnable `ModelNew` script that satisfies
+**ALL OUTPUT RULES (STRICT)** above.
+# ==========================================================
+# OUTPUT FORMAT – copy verbatim
+Return **exactly one** fenced block labelled `python`.  No text before or after.
+Use this skeleton (the model must fill it):
+
+```python
+# <complete ModelNew code>
+```
+# ==========================================================
+
+=== Raw Reply ===
+Okay, let's see. The user provided a Python script with a CUDA kernel that's causing a syntax error due to unexpected indentation. The error message points to line 2 of the Python code having an indentation issue. Looking at the current kernel code they provided, the imports and other lines after the first 'import torch' are all indented with leading spaces. That's probably the problem.
+
+In Python, the indentation has to be consistent. The first line starts with 'import torch' with no leading spaces, but the next lines like 'import torch.nn as nn' and the rest have four spaces before them. That would cause a syntax error because the Python interpreter expects the same level of indentation within a block. Since those lines are at the top-level module scope, they shouldn't be indented at all.
+
+So the fix is to remove the leading spaces from those indented lines. The entire Python code block should have proper indentation. The user's code has all the lines after the first import indented, which is incorrect. So I need to correct that by making sure all the top-level statements (imports, source definition, etc.) are not indented.
+
+Also, checking the CUDA code inside the source string: the kernel code itself seems okay, but maybe there's another issue. However, the error message specifically mentions a syntax error in the Python code, not the CUDA part. So the main focus is on the Python syntax.
+
+Another thing to check: the 'load_inline' call and the class definition. The user's code might have other indentation issues, but according to the error, line 2 is the first one with the problem. Let me reconstruct the code step by step.
+
+Original code's first few lines:
+
+import torch
+        import torch.nn as nn
+        from torch.utils.cpp_extension import load_inline
+
+These lines after the first have four spaces before them. Removing those spaces so all imports are at the same level. Then the rest of the code (source, cpp_src, load_inline, ModelNew class) should also have their top-level lines unindented.
+
+So the corrected Python script would have all the top-level statements (imports, variable definitions, class) without leading spaces. The CUDA code inside the triple quotes is okay as long as the Python syntax is fixed.
+
+Therefore, the repaired code should have all the lines at the module level properly aligned without extra indentation. That should fix the SyntaxError mentioned.
+</think>
+
+```python
+import torch
+import torch.nn as nn
+from torch.utils.cpp_extension import load_inline
+
+source = """
+#include <torch/extension.h>
+#include <cuda_runtime.h>
+
+__global__ void matmul3d_kernel(const float* A, const float* B, float* C, int N, int M, int K, int L) {
+    int blockId = blockIdx.x;
+    int n = blockId / M;
+    int m = blockId % M;
+    int l = threadIdx.x;
+    if (l >= L) return;
+
+    extern __shared__ float shared_data[];
+    float* shared_A = shared_data;
+    float* shared_B = shared_data + K;
+
+    // Load A_row into shared_A.
+    for (int k = threadIdx.x; k < K; k += blockDim.x) {
+        shared_A[k] = A[n * M * K + m * K + k];
+    }
+
+    // Load B_col into shared_B.
+    for (int k = threadIdx.x; k < K; k += blockDim.x) {
+        shared_B[k] = B[k * L + l];
+    }
+
+    __syncthreads();
+
+    float sum = 0.0f;
+    for (int k = 0; k < K; ++k) {
+        sum += shared_A[k] * shared_B[k];
+    }
+
+    C[n * M * L + m * L + l] = sum;
+}
+
+torch::Tensor matmul3d_cuda(torch::Tensor A, torch::Tensor B) {
+    int N = A.size(0);
+    int M = A.size(1);
+    int K = A.size(2);
+    int L = B.size(1);
+
+    auto C = torch::empty({N, M, L}, A.options());
+
+    dim3 blocks(N * M);
+    dim3 threads(L);
+    size_t shared_mem = 2 * K * sizeof(float);
+
+    matmul3d_kernel<<<blocks, threads, shared_mem, at::cuda::getCurrentCUDAStream()>>>(
+        A.data_ptr<float>(), B.data_ptr<float>(), C.data_ptr<float>(), N, M, K, L
+    );
+
+    return C;
+}
+"""
+
+cpp_src = (
+    "torch::Tensor matmul3d_cuda(torch::Tensor A, torch::Tensor B);"
+)
+
+matmul3d = load_inline(
+    name="matmul3d",
+    cpp_sources=cpp_src,
+    cuda_sources=source,
+    functions=["matmul3d_cuda"],
+    verbose=True,
+    extra_cflags=["-O3"],
+    extra_ldflags=[""],
+)
+
+class ModelNew(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.matmul3d = matmul3d
+
+    def forward(self, A, B):
+        return self.matmul3d.matmul3d_cuda(A, B)
+```

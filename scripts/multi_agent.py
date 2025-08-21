@@ -340,7 +340,7 @@ class MultiAgent:
             # 1) Analyzer
             sys_p, usr_p = build_repair_messages(
                 gpu_name=self.gpu_name,
-                arch_path=cur_path,
+                current_kernel_path=cur_path,
                 metrics=self.current_kernel.metrics,
                 existing_errors=error_list,
                 round_idx=round_idx,
@@ -358,7 +358,7 @@ class MultiAgent:
             # 2) Judge
             sys_p, usr_p = build_judge_repair_messages(
                 gpu_name=self.gpu_name,
-                arch_path=cur_path,
+                current_kernel_path=cur_path,
                 existing_errors=error_list,
                 metrics=self.current_kernel.metrics,
                 round_idx=round_idx,
@@ -374,7 +374,7 @@ class MultiAgent:
         # 2) Coder：依据优化策略生成代码
         sys_p, usr_p = build_coder_repair_prompts(
             gpu_name=self.gpu_name,
-            arch_path=cur_path,
+            current_kernel_path=cur_path,
             existing_errors=error_list,
             metrics=self.current_kernel.metrics,
         )

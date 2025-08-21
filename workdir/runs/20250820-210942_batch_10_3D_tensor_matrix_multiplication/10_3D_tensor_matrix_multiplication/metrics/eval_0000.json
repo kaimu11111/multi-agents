@@ -1,0 +1,6 @@
+{
+  "runnable": false,
+  "phase": "seed",
+  "error_type": "BenchmarkError",
+  "message": "Traceback (most recent call last):\n  File \"/home/wan00559/three_agents/scripts/multi_agent.py\", line 203, in create_seed_kernel_with_agents\n    metrics = compare_and_bench(\n              ^^^^^^^^^^^^^^^^^^\n  File \"/home/wan00559/three_agents/utils/compile_and_run.py\", line 228, in compare_and_bench\n    raise RuntimeError(traceback.format_exc()) from None\nRuntimeError: Traceback (most recent call last):\n  File \"/home/wan00559/three_agents/utils/compile_and_run.py\", line 221, in compare_and_bench\n    raise ValueError(f\"max_abs_err={max_err:.3e} > tol={tol}\")\nValueError: max_abs_err=1.770e-03 > tol=0.001\n\n"
+}

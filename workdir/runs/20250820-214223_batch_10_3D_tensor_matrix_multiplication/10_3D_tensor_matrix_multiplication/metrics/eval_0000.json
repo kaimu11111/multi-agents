@@ -1,0 +1,6 @@
+{
+  "runnable": false,
+  "phase": "seed",
+  "error_type": "BenchmarkError",
+  "message": "Traceback (most recent call last):\n  File \"/home/wan00559/three_agents/scripts/multi_agent.py\", line 203, in create_seed_kernel_with_agents\n    metrics = compare_and_bench(\n              ^^^^^^^^^^^^^^^^^^\n  File \"/home/wan00559/three_agents/utils/compile_and_run.py\", line 197, in compare_and_bench\n    test_mod, _ = _capture_import(test_py)\n                  ^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/wan00559/three_agents/utils/compile_and_run.py\", line 98, in _capture_import\n    raise CompilationError(full_log) from None\nutils.compile_and_run.CompilationError: unexpected indent (kernel_20250820_215100.py, line 2)\n"
+}

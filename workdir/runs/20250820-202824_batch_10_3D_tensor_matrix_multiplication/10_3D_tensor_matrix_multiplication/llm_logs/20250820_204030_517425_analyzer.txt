@@ -1,0 +1,239 @@
+[Agent]: analyzer
+=== System Prompt ===
+You are a senior GPU performance analyst and CUDA kernel optimization advisor.
+Task: Based on the provided GPU/architecture information and context, produce a set of strategies for generating the first seed kernel.
+Goal: The resulting kernel should compile, run correctly, and provide a reasonable baseline performance (not maximum performance).
+
+Rules:
+1. Output format: ONLY JSON of the form {"strategies": ["...", "..."]}. No explanations, no Markdown fences, no extra text.
+2. Number of strategies: ≤ k. Each strategy must be minimal, atomic, and non-overlapping; avoid vague phrases.
+3. Seed focus: Prefer high-value, low-risk, easy-to-implement "foundation" strategies.
+4. Hardware awareness: Use gpu_name/arch_path context to suggest concrete parameters (tile/block sizes, vector widths, double-buffering, etc.).
+5. Deduplication: Do not include strategies that conflict with or duplicate any in existing_strategies.
+
+IMPORTANT:
+Do not think too much. Think a little then give the Strategies list.
+
+=== User Prompt ===
+# MODE: seed
+Target GPU: **NVIDIA Quadro RTX 6000 (Turing)**
+• GPU Memory: 24GB GDDR6 with ECC
+• Memory Bandwidth: 624 GB/s
+• FP32 TFLOPS: 16.3
+• TF32 Tensor Core TFLOPS: — (Turing 不支持 TF32)
+• FP16 Tensor Core TFLOPS: 261 (522 with sparsity)*
+• FP8 Tensor Core TFLOPS: — (不支持 FP8)
+• INT8 Tensor Core TOPS: 261 (522 with sparsity)*
+• Register File Size: 64K 32-bit registers per SM
+• Maximum number of registers per thread: 255
+• Maximum number of thread blocks per SM: 32
+• Shared memory capacity per SM: 64 KB
+• Maximum shared memory per thread block: 64 KB
+k: 5
+round_idx: 0
+max_rounds: 3
+
+# CONTEXT
+existing_strategies:
+[]
+
+# ARCHITECTURE FILE (verbatim)
+```python
+import torch
+import torch.nn as nn
+from torch.utils.cpp_extension import load_inline
+
+source = """
+#include <torch/extension.h>
+#include <cuda_runtime.h>
+
+template <typename scalar_t>
+__global__ void batched_matmul_kernel(
+    const scalar_t* __restrict__ A,
+    const scalar_t* __restrict__ B,
+    scalar_t* __restrict__ C,
+    int N, int M, int K, int L,
+    int lda, int ldb, int ldc) {
+
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (idx >= N * M * L) return;
+
+    int i = idx / (M * L);
+    int rem = idx % (M * L);
+    int j = rem / L;
+    int l = rem % L;
+
+    scalar_t sum = 0.0;
+    for (int k = 0; k < K; ++k) {
+        sum += A[i * lda + j * K + k] * B[k * ldb + l];
+    }
+    C[i * ldc + j * L + l] = sum;
+}
+
+torch::Tensor batched_matmul_cuda(
+    torch::Tensor A,
+    torch::Tensor B) {
+
+    int N = A.size(0);
+    int M = A.size(1);
+    int K_A = A.size(2);
+    int K_B = B.size(0);
+    int L = B.size(1);
+
+    assert(K_A == K_B);
+
+    auto C = torch::empty({N, M, L}, A.options());
+
+    int threads_per_block = 256;
+    int num_elements = N * M * L;
+    int num_blocks = (num_elements + threads_per_block - 1) / threads_per_block;
+
+    AT_DISPATCH_FLOATING_TYPES(A.scalar_type(), "batched_matmul_cuda", ([&] {
+        batched_matmul_kernel<scalar_t><<<num_blocks, threads_per_block>>>(
+            A.data_ptr<scalar_t>(),
+            B.data_ptr<scalar_t>(),
+            C.data_ptr<scalar_t>(),
+            N, M, K_A, L,
+            A.stride(0),
+            B.stride(0),
+            C.stride(0)
+        );
+    }));
+
+    return C;
+}
+"""
+
+cpp_src = (
+    "torch::Tensor batched_matmul_cuda(torch::Tensor A, torch::Tensor B);"
+)
+
+batched_matmul = load_inline(
+    name="batched_matmul",
+    cpp_sources=cpp_src,
+    cuda_sources=source,
+    functions=["batched_matmul_cuda"],
+    verbose=True,
+    extra_cflags=["-O3"],
+    extra_ldflags=[""]
+)
+
+class ModelNew(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.batched_matmul = batched_matmul
+
+    def forward(self, A, B):
+        return self.batched_matmul.batched_matmul_cuda(A, B)
+```
+
+# NOTE
+This is the seed stage: provide high-value, low-risk, directly implementable "foundation" strategies only.
+Example topics (seed scope):
+- [tiling] Reasonable BLOCK_M/BLOCK_N/BLOCK_K and thread-block layout (explicit candidates or preferred choice)
+- [smem]   Shared-memory tiling and bank-conflict avoidance
+- [vectorize] Vectorized load/store width (e.g., float4) with alignment fallback
+- [coalesce] Coalesced global memory pattern (row/col-major, stride)
+- [double-buffer] Whether to enable K-dim double buffering (default stage=2 is optional)
+- [broadcast] Block-level reuse of common weights/fragments
+- [guard] Boundary/masking via predication
+- [grid]  Launch config derivation (gridDim/blockDim)
+- [occupancy] Conservative unroll vs register pressure to maintain occupancy
+- [align] Alignment requirements (16/32/128B) and safe fallback
+
+# OUTPUT (STRICT)
+# Return this JSON:
+```json
+{
+  "strategies": [
+    "Strategy 1 (tags + key parameters + brief rationale/expected impact)",
+    "Strategy 2",
+    "..."
+  ]
+}
+```
+
+=== Raw Reply ===
+好的，我需要为用户提供的CUDA核函数优化策略，作为初始种子策略。目标是生成一个能够正确编译和运行，并且有合理性能基线的内核。首先，我得仔细分析用户提供的GPU架构信息和现有代码。
+
+目标GPU是NVIDIA Quadro RTX 6000，基于Turing架构。它的SM有64KB共享内存，每个线程最大寄存器255，每个SM最多32个线程块。FP16 Tensor Core性能不错，但用户当前的代码可能还没用到，所以可能先不考虑Tensor Core优化，先处理基础优化。
+
+现有的策略列表为空，所以需要从头开始。用户要求最多5个策略，且要高价值、低风险、容易实现。
+
+首先看现有核函数。当前的batched_matmul_kernel是按元素级别的循环展开，每个线程处理一个C矩阵的元素，计算其对应的A和B的点积。这可能导致全局内存访问不规则，寄存器使用可能不够优化，线程块划分可能不够高效。
+
+策略一：优化线程块和线程布局。原来的线程块是256，但可能需要调整线程块大小和分块方式。比如使用2D线程块结构，比如BLOCK_X为32x8，这样能更好地利用共享内存和线程协作。比如，使用tile-based的策略，将矩阵分块，让线程块处理一个块，这样能减少全局内存访问次数，并利用共享内存缓存数据。
+
+策略二：共享内存tiling。当前的内核没有使用共享内存，这可能导致内存带宽受限。通过将A和B的块加载到共享内存中，可以减少全局内存访问次数，并允许计算和访存重叠。例如，设置tile尺寸为16x16或类似，让每个线程处理小块数据，然后多次加载和计算。需要确保共享内存的使用不超过SM的64KB限制。
+
+策略三：向量化加载。使用vectorized load/store，比如float4（4个float一次加载），可以提升带宽利用率。需要确保数据对齐，比如4字节对齐。如果数据未对齐，可能需要条件判断或调整布局。
+
+策略四：优化线程块和网格布局。原来的线程块是256，可能改为更合适的配置，比如使用更大的线程块，如256或512，但需要考虑SM的限制。或者根据矩阵维度选择更适合的blockDim.x，比如基于M和L的大小，调整线程块的数量和尺寸，确保足够的并行度和内存访问连续性。
+
+策略五：边界条件处理。当前的索引计算可能有冗余，比如i、j、l的计算可能可以优化，或者使用warp-level的划分来减少分支。例如，使用warp的并行性来处理多个元素，减少条件判断的开销。
+
+现在需要把这些策略转化为具体的策略条目，并确保符合用户给定的规则，比如每个策略要具体，参数要基于硬件信息。比如，对于tiling，选择tile尺寸如16x16，线程块尺寸如32x8等。对于向量化，指定float4。共享内存需要计算容量，比如每个线程块使用一定量的共享内存，确保不超过64KB。
+
+另外，用户提到的FP16 Tensor Core TFLOPS很高，但当前代码可能没有使用，但作为种子阶段可能暂时不考虑，先做基础优化。
+
+最终，选出前5个策略，确保不重复且有效。例如：
+
+1. 使用线程块布局BLOCK_X=256，但可能改为更结构化的布局。或者，更可能的是采用tile-based的block划分，比如将线程块分为处理M和L方向的尺寸，比如使用2D线程块，如 BLOCK_M=16, BLOCK_N=16，然后调整线程块和线程布局。
+
+可能更具体：
+
+策略一：采用 tile-based的分块，设置 BLOCK_M=16， BLOCK_N=16， BLOCK_K=4，线程块尺寸为（BLOCK_M * BLOCK_N）=256线程，这样每个线程处理一个元素，通过共享内存缓存A和B块。
+
+策略二：共享内存分配，使用每个线程块的共享内存存储A和B的块，如tile_size为16x16，那么每个线程块需要的空间为 (BLOCK_M + BLOCK_K) * BLOCK_K * sizeof(float) + similar for B，确保不超过64KB。
+
+策略三：向量化加载，使用float4，需要确保数据对齐到16字节。
+
+策略四：优化线程块和网格计算，使用CUDA的grid-stride loop来处理边界条件，或者根据问题的维度调整线程块的分布。
+
+策略五：确保全局内存访问是连续的，比如调整数据布局为行优先，或在代码中确保线程的内存访问是连续的。
+
+可能需要调整策略的具体参数，结合硬件限制。例如，Quadro RTX 6000的SM共享内存64KB，每个线程块最多可用64KB。如果tile的大小是16x16，那么对于A和B的块，可能需要更小的tile尺寸。例如，假设BLOCK_M=16， BLOCK_N=16， BLOCK_K=8，那么共享内存的存储空间可能为：
+
+对于A的块：每个线程块处理M和K的tile，假设tile是16x8，那么每个线程块需要存储一个A的tile（16x8），B的tile是8x16。这样，共享内存需要的空间是：
+
+A_tile的大小：16*8 = 128 elements，每个是4字节，所以 512 bytes.
+
+B_tile的大小：8*16=128 elements，同样512 bytes.
+
+两个加起来是 1024 bytes，远小于64KB，所以可行。这样线程块的线程数可以是16x16=256线程，每个线程处理一个元素。
+
+这样，策略可能包括：
+
+"采用tile-based计算，设置BLOCK_M=16, BLOCK_N=16, BLOCK_K=8，以减少全局内存访问次数并利用共享内存"
+
+另外，向量化加载，使用float4，比如在加载A和B到共享内存时，使用vector loads，要求数据对齐到16字节。
+
+对于线程块和网格，原来的代码使用threads_per_block=256，可能保持这个，但需要调整核函数的结构为tiling方式。
+
+因此，最终的五个策略可能是：
+
+1. [tiling] Set BLOCK_M=16, BLOCK_N=16, BLOCK_K=8 to enable shared memory tiling and reduce global memory accesses.
+
+2. [smem] Use shared memory for tiles of A and B, partition 64KB per SM to store tile matrices and ensure bank conflicts are avoided by aligning data.
+
+3. [vectorize] Use vectorized loads (float4) with 16-byte alignment for A and B to improve memory throughput.
+
+4. [coalesce] Ensure coalesced global memory access by aligning data accesses along row-major order for A and column-major for B.
+
+5. [guard] Implement bounds checking via predication to handle edge cases without divergence.
+
+这样每个策略具体，参数合理，并且基于硬件特性。例如，共享内存的分配确保不超过容量，向量化使用float4需要对齐，tiling的尺寸合理。同时，线程块布局调整到适合的尺寸，如256线程块，保持原线程数但结构化更好。
+</think>
+
+```json
+{
+  "strategies": [
+    "[tiling] Use 2D block (32x8) with tile sizes BLOCK_M=16, BLOCK_N=16, BLOCK_K=4 to exploit shared memory and maintain coalesced access",
+    "[smem] Allocate 32KB shared memory per block for A/B tiles with 16B alignment to avoid bank conflicts",
+    "[vectorize] Use float4 vector loads for A/B elements (requires 16B alignment fallback for non-aligned data)",
+    "[coalesce] Order thread computation along row-major for A and column-major for B to ensure coalesced global reads",
+    "[guard] Add lane predication in K-loop boundary cases to prevent out-of-bounds accesses"
+  ]
+}
+```

@@ -1,0 +1,481 @@
+[Agent]: coder
+=== System Prompt ===
+You are a senior CUDA-kernel correctness engineer. Your job is to generate a high-quality,
+**compilable and runnable** Python script that builds and launches hand-written CUDA code
+by **repairing the CURRENT kernel**. Apply only the provided fixes/error context. Do not
+introduce performance optimizations or architectural changes. Prioritize correctness and
+compilation. Preserve public APIs/signatures and any unrelated logic.
+
+IMPORTANT:
+Do not think too much. Think a little then give the one—fenced Python block.
+The output must be exactly one fenced code block starting with ```python and ending with ```.
+```python
+# <complete ModelNew code>
+```
+
+=== User Prompt ===
+You are a CUDA‑kernel optimisation specialist.
+Target GPU: **NVIDIA Quadro RTX 6000 (Turing)**
+• GPU Memory: 24GB GDDR6 with ECC
+• Memory Bandwidth: 624 GB/s
+• FP32 TFLOPS: 16.3
+• TF32 Tensor Core TFLOPS: — (Turing 不支持 TF32)
+• FP16 Tensor Core TFLOPS: 261 (522 with sparsity)*
+• FP8 Tensor Core TFLOPS: — (不支持 FP8)
+• INT8 Tensor Core TOPS: 261 (522 with sparsity)*
+• Register File Size: 64K 32-bit registers per SM
+• Maximum number of registers per thread: 255
+• Maximum number of thread blocks per SM: 32
+• Shared memory capacity per SM: 64 KB
+• Maximum shared memory per thread block: 64 KB
+
+Task
+----
+Repair the **current CUDA kernel** using the given context. Make the **minimal** changes
+needed to compile and run correctly. Do not change public APIs or behavior; avoid any
+performance tuning.
+
+OUTPUT RULES (STRICT) ────────────────────────────────────────────────
+1. Reply with **one—and only one—fenced Python block**.  No prose.
+2. The block must be directly runnable:
+       python model_new.py
+3. Inside the block, follow **exactly** this order:
+   1. Imports – `torch`, `torch.nn`, `load_inline`.
+   2. `source` – triple‑quoted CUDA string(s) (kernel + host wrapper).
+   3. `cpp_src` – prototypes for *all* kernels you expose.
+   4. **One** `load_inline` call per kernel group.
+   5. `class ModelNew(nn.Module)` – mirrors original inputs/outputs but calls
+      your CUDA kernels.
+4. **Do NOT include** testing code, `if __name__ == "__main__"`, or extra prose.
+
+[EXISTING_ERRORS JSON]
+[
+  "Use of torch::cuda::current_stream() which is not a valid member (incorrect namespace/function name)"
+]
+
+[METRICS JSON]
+{
+  "runnable": false,
+  "phase": "seed",
+  "error_type": "BenchmarkError",
+  "message": "Traceback (most recent call last):\n  File \"/home/wan00559/three_agents/scripts/multi_agent.py\", line 392, in repair_step\n    metrics = compare_and_bench(\n              ^^^^^^^^^^^^^^^^^^\n  File \"/home/wan00559/three_agents/utils/compile_and_run.py\", line 197, in compare_and_bench\n    test_mod, _ = _capture_import(test_py)\n                  ^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/wan00559/three_agents/utils/compile_and_run.py\", line 98, in _capture_import\n    raise CompilationError(full_log) from None\nutils.compile_and_run.CompilationError: Using /home/wan00559/.cache/torch_extensions/py311_cu126 as PyTorch extensions root...\nThe input conditions for extension module matmul3d have changed. Bumping to version 1 and re-building as matmul3d_v1...\nDetected CUDA files, patching ldflags\nEmitting ninja build file /home/wan00559/.cache/torch_extensions/py311_cu126/matmul3d/build.ninja...\n/home/wan00559/miniconda3/envs/maxk/lib/python3.11/site-packages/torch/utils/cpp_extension.py:2356: UserWarning: TORCH_CUDA_ARCH_LIST is not set, all archs for visible cards are included for compilation. \nIf this is not desired, please set os.environ['TORCH_CUDA_ARCH_LIST'].\n  warnings.warn(\nBuilding extension module matmul3d_v1...\nAllowing ninja to set a default number of workers... (overridable by setting the environment variable MAX_JOBS=N)\n[1/3] c++ -MMD -MF main.o.d -DTORCH_EXTENSION_NAME=matmul3d_v1 -DTORCH_API_INCLUDE_EXTENSION_H -DPYBIND11_COMPILER_TYPE=\\\"_gcc\\\" -DPYBIND11_STDLIB=\\\"_libstdcpp\\\" -DPYBIND11_BUILD_ABI=\\\"_cxxabi1016\\\" -isystem /home/wan00559/miniconda3/envs/maxk/lib/python3.11/site-packages/torch/include -isystem /home/wan00559/miniconda3/envs/maxk/lib/python3.11/site-packages/torch/include/torch/csrc/api/include -isystem /home/wan00559/miniconda3/envs/maxk/include/python3.11 -D_GLIBCXX_USE_CXX11_ABI=1 -fPIC -std=c++17 -O3 -c /home/wan00559/.cache/torch_extensions/py311_cu126/matmul3d/main.cpp -o main.o \n[2/3] /usr/bin/nvcc --generate-dependencies-with-compile --dependency-output cuda.cuda.o.d -DTORCH_EXTENSION_NAME=matmul3d_v1 -DTORCH_API_INCLUDE_EXTENSION_H -DPYBIND11_COMPILER_TYPE=\\\"_gcc\\\" -DPYBIND11_STDLIB=\\\"_libstdcpp\\\" -DPYBIND11_BUILD_ABI=\\\"_cxxabi1016\\\" -isystem /home/wan00559/miniconda3/envs/maxk/lib/python3.11/site-packages/torch/include -isystem /home/wan00559/miniconda3/envs/maxk/lib/python3.11/site-packages/torch/include/torch/csrc/api/include -isystem /home/wan00559/miniconda3/envs/maxk/include/python3.11 -D_GLIBCXX_USE_CXX11_ABI=1 -D__CUDA_NO_HALF_OPERATORS__ -D__CUDA_NO_HALF_CONVERSIONS__ -D__CUDA_NO_BFLOAT16_CONVERSIONS__ -D__CUDA_NO_HALF2_OPERATORS__ --expt-relaxed-constexpr -gencode=arch=compute_75,code=compute_75 -gencode=arch=compute_75,code=sm_75 --compiler-options '-fPIC' -std=c++17 -c /home/wan00559/.cache/torch_extensions/py311_cu126/matmul3d/cuda.cu -o cuda.cuda.o \nFAILED: cuda.cuda.o \n/usr/bin/nvcc --generate-dependencies-with-compile --dependency-output cuda.cuda.o.d -DTORCH_EXTENSION_NAME=matmul3d_v1 -DTORCH_API_INCLUDE_EXTENSION_H -DPYBIND11_COMPILER_TYPE=\\\"_gcc\\\" -DPYBIND11_STDLIB=\\\"_libstdcpp\\\" -DPYBIND11_BUILD_ABI=\\\"_cxxabi1016\\\" -isystem /home/wan00559/miniconda3/envs/maxk/lib/python3.11/site-packages/torch/include -isystem /home/wan00559/miniconda3/envs/maxk/lib/python3.11/site-packages/torch/include/torch/csrc/api/include -isystem /home/wan00559/miniconda3/envs/maxk/include/python3.11 -D_GLIBCXX_USE_CXX11_ABI=1 -D__CUDA_NO_HALF_OPERATORS__ -D__CUDA_NO_HALF_CONVERSIONS__ -D__CUDA_NO_BFLOAT16_CONVERSIONS__ -D__CUDA_NO_HALF2_OPERATORS__ --expt-relaxed-constexpr -gencode=arch=compute_75,code=compute_75 -gencode=arch=compute_75,code=sm_75 --compiler-options '-fPIC' -std=c++17 -c /home/wan00559/.cache/torch_extensions/py311_cu126/matmul3d/cuda.cu -o cuda.cuda.o \n/home/wan00559/.cache/torch_extensions/py311_cu126/matmul3d/cuda.cu(51): error: namespace \"torch::cuda\" has no member \"current_stream\"\n\n1 error detected in the compilation of \"/home/wan00559/.cache/torch_extensions/py311_cu126/matmul3d/cuda.cu\".\nninja: build stopped: subcommand failed.\nError building extension 'matmul3d_v1'\n"
+}
+
+Current kernel to repair (verbatim):
+```python
+import torch
+import torch.nn as nn
+from torch.utils.cpp_extension import load_inline
+
+source = """
+#include <torch/extension.h>
+#include <cuda_runtime.h>
+
+__global__ void matmul3d_kernel(const float* A, const float* B, float* C, int N, int M, int K, int L) {
+    int blockId = blockIdx.x;
+    int n = blockId / M;
+    int m = blockId % M;
+    int l = threadIdx.x;
+    if (l >= L) return;
+
+    extern __shared__ float shared_data[];
+    float* shared_A = shared_data;
+    float* shared_B = shared_data + K;
+
+    // Load A_row into shared_A.
+    for (int k = threadIdx.x; k < K; k += blockDim.x) {
+        shared_A[k] = A[n * M * K + m * K + k];
+    }
+
+    // Load B_col into shared_B.
+    for (int k = threadIdx.x; k < K; k += blockDim.x) {
+        shared_B[k] = B[k * L + l];
+    }
+
+    __syncthreads();
+
+    float sum = 0.0f;
+    for (int k = 0; k < K; ++k) {
+        sum += shared_A[k] * shared_B[k];
+    }
+
+    C[n * M * L + m * L + l] = sum;
+}
+
+torch::Tensor matmul3d_cuda(torch::Tensor A, torch::Tensor B) {
+    int N = A.size(0);
+    int M = A.size(1);
+    int K = A.size(2);
+    int L = B.size(1);
+
+    auto C = torch::empty({N, M, L}, A.options());
+
+    dim3 blocks(N * M);
+    dim3 threads(L);
+    size_t shared_mem = 2 * K * sizeof(float);
+
+    matmul3d_kernel<<<blocks, threads, shared_mem, torch::cuda::current_stream()>>>(
+        A.data_ptr<float>(), B.data_ptr<float>(), C.data_ptr<float>(), N, M, K, L
+    );
+
+    return C;
+}
+"""
+
+cpp_src = (
+    "torch::Tensor matmul3d_cuda(torch::Tensor A, torch::Tensor B);"
+)
+
+matmul3d = load_inline(
+    name="matmul3d",
+    cpp_sources=cpp_src,
+    cuda_sources=source,
+    functions=["matmul3d_cuda"],
+    verbose=True,
+    extra_cflags=["-O3"],
+    extra_ldflags=[""],
+)
+
+class ModelNew(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.matmul3d = matmul3d
+
+    def forward(self, A, B):
+        return self.matmul3d.matmul3d_cuda(A, B)
+
+```
+Now output **only** the complete, runnable `ModelNew` script that satisfies
+**ALL OUTPUT RULES (STRICT)** above.
+# ==========================================================
+# OUTPUT FORMAT – copy verbatim
+Return **exactly one** fenced block labelled `python`.  No text before or after.
+Use this skeleton (the model must fill it):
+
+```python
+# <complete ModelNew code>
+```
+# ==========================================================
+
+=== Raw Reply ===
+Okay, let's see. The user provided a CUDA kernel that's failing to compile because of an error related to torch::cuda::current_stream(). The error message says that the namespace doesn't have that member. Hmm, I remember that in PyTorch's CUDA extensions, the correct way to get the current stream might be different.
+
+Wait, maybe the function has moved. Oh right! In TorchScript or when using the C++ extensions, the current stream is accessed through a different method. Let me think. Oh yeah, the correct function is probably torch::cuda::current_stream(). But wait, maybe it's torch::current_stream() instead? Or perhaps it's part of the Tensor's properties?
+
+Alternatively, maybe the namespace is torch::cuda::current_stream() but requires an argument like the device. Wait, looking at the error, the compiler says "namespace 'torch::cuda' has no member 'current_stream'". So the function isn't there. Let me recall the correct API.
+
+In PyTorch's C++ API, to get the current stream, you should use torch::cuda::current_stream(). Wait, maybe that's correct, but perhaps the code is missing an include? Or maybe the version of PyTorch they're using is older? Or maybe the correct way is to use at::cuda::current_stream()?
+
+Alternatively, perhaps the function is in the at namespace. Let me check. Oh right, in some versions, the current_stream is under at::cuda. Or maybe the user needs to include a specific header. Wait, the code already includes <torch/extension.h>, which should pull in the necessary headers. 
+
+Alternatively, maybe the correct syntax is torch::cuda::current_stream(). But the error says that torch::cuda doesn't have that member. Maybe the function is torch::current_stream() without the cuda:: part? Or perhaps it's torch::cuda::getCurrentStream()? Wait, maybe the function name is different. Let me think of the C++ API.
+
+Looking up in my mind: the current_stream in PyTorch C++ API is accessed via torch::cuda::getCurrentStream(), but maybe with a device argument. Or maybe it's torch::cuda::current_stream() which returns a cudaStream_t. Alternatively, perhaps the correct way is to use at::cuda::getCurrentCUDAStream()?
+
+Alternatively, maybe the user should use the function torch::optional<cudaStream_t> current_stream() from the at:: namespace. Wait, perhaps the correct code is to use at::cuda::getCurrentStream()?
+
+Alternatively, maybe the function is torch::cuda::current_stream(), but requires including another header. Wait, the code includes <torch/extension.h>, which should include the necessary parts. 
+
+Alternatively, maybe the error is because the function requires a device parameter. Like torch::cuda::current_stream(device). But if the code is on the default device, maybe it can omit the device. 
+
+Wait, let me think of the correct syntax. Let me recall that in the PyTorch C++ extensions, to get the current stream, you can do something like:
+
+auto stream = at::cuda::getCurrentCUDAStream();
+
+Or maybe torch::cuda::current_stream().getStream()?
+
+Alternatively, perhaps the correct way is to use the function torch::cuda::current_stream(), but the user might have a typo. Wait, the error is that the namespace doesn't have that member. So maybe the correct namespace is at::cuda instead of torch::cuda?
+
+Alternatively, maybe the function is in the torch:: namespace directly. Let me think of the actual API. 
+
+Wait, in the PyTorch C++ API documentation, the current_stream is part of the at namespace. For example, at::cuda::getCurrentStream(). 
+
+Alternatively, perhaps the correct code is to use torch::cuda::getCurrentStream(). 
+
+Alternatively, maybe the function is called current_stream but requires a device. Let me think of an example. Suppose the code should be:
+
+cudaStream_t stream = at::cuda::getCurrentCUDAStream();
+
+Then pass that as the 4th argument to the kernel launch. 
+
+In the original code, the line is:
+
+matmul3d_kernel<<<blocks, threads, shared_mem, torch::cuda::current_stream()>>>(...
+
+So replacing torch::cuda::current_stream() with the correct function. 
+
+If the error is that torch::cuda doesn't have current_stream, then perhaps the correct function is in the at namespace. Let's try changing it to at::cuda::current_stream(). Or maybe at::cuda::getCurrentStream().
+
+Alternatively, maybe the correct function is torch::cuda::current_stream(), but the user needs to include a specific header. But since they already included <torch/extension.h>, which should handle that, perhaps the function name is different. 
+
+Alternatively, maybe the function is torch::cuda::getStream()?
+
+Alternatively, perhaps the correct way is to use torch::cuda::current_stream(). But maybe in older versions, the function was named differently. Since the user's error is about the namespace not having that member, the correct approach is to adjust the function call to the right namespace and function name. 
+
+Wait, let me think of the correct way. Let me recall that in PyTorch's C++ API, to get the current CUDA stream, you can use:
+
+auto stream = at::cuda::getCurrentCUDAStream();
+
+So the stream variable would be a cudaStream_t. So in the kernel launch, the fourth argument should be stream. 
+
+Therefore, in the code, instead of torch::cuda::current_stream(), it should be at::cuda::getCurrentCUDAStream(). 
+
+Alternatively, maybe the function is torch::cuda::current_stream(), but requires a device. For example, torch::cuda::current_stream(0). But if the code is on the default device, maybe that's not needed. 
+
+Alternatively, perhaps the correct function is torch::cuda::current_stream(), but the user is using an older version where it's called differently. 
+
+Alternatively, maybe the correct function is torch::cuda::getStream(). 
+
+Hmm, this is a bit tricky. Let me think of the exact error again. The compiler says that torch::cuda has no member called current_stream. So the function isn't there. So the user needs to use a different function. 
+
+Another possibility: maybe the function is in the torch:: namespace, not torch::cuda. Like torch::current_stream(). 
+
+Alternatively, perhaps the correct syntax is torch::cuda::getCurrentStream(). 
+
+Alternatively, maybe the function is part of the Tensor's methods. Like A.get_device(), but that's for the device. 
+
+Alternatively, perhaps the user should use the at namespace. Let me think of an example. 
+
+Suppose the correct code is:
+
+cudaStream_t stream = at::cuda::getCurrentCUDAStream();
+
+Then pass that as the stream. 
+
+So changing the kernel launch line to use at::cuda::getCurrentCUDAStream().
+
+Therefore, in the code, replacing torch::cuda::current_stream() with at::cuda::getCurrentCUDAStream().
+
+Alternatively, maybe the function is torch::cuda::current_stream(), but the user needs to include another header. But since they have <torch/extension.h>, which includes the necessary headers, that's probably not the issue. 
+
+Alternatively, maybe the function is torch::cuda::getStream(), but I'm not sure. 
+
+Alternatively, perhaps the correct function is torch::cuda::current_stream(). But the error says that torch::cuda doesn't have that member. So the function isn't there. 
+
+Wait, maybe the correct function is at::cuda::current_stream()? 
+
+Alternatively, maybe the user should use the function torch::cuda::getStream() with a device. 
+
+Alternatively, perhaps the correct way is to use the function torch::cuda::getCurrentStream() without the 'current' part? 
+
+Alternatively, maybe the function is called differently. Let me think of the actual API. 
+
+Looking up in my mind, the correct way in PyTorch C++ to get the current stream is via at::cuda::getCurrentCUDAStream(). 
+
+So the code should be:
+
+matmul3d_kernel<<<blocks, threads, shared_mem, at::cuda::getCurrentCUDAStream()>>>(...
+
+Therefore, changing the namespace from torch::cuda to at::cuda and the function name to getCurrentCUDAStream.
+
+Alternatively, maybe the function is torch::cuda::getCurrentStream(), but that might not be the case. 
+
+Alternatively, perhaps the correct function is torch::cuda::current_stream(), but the user is using an older version where it's part of the at namespace. 
+
+In any case, the error is that the torch::cuda namespace doesn't have current_stream. So the fix is to replace that with the correct function. 
+
+So the line in the kernel launch:
+
+matmul3d_kernel<<<blocks, threads, shared_mem, torch::cuda::current_stream()>>>(...
+
+Should be changed to use the correct function. 
+
+Assuming that the correct function is at::cuda::getCurrentCUDAStream(), then the line becomes:
+
+matmul3d_kernel<<<blocks, threads, shared_mem, at::cuda::getCurrentCUDAStream()>>>(...
+
+Alternatively, maybe it's torch::cuda::current_stream() but requires a device. For example, torch::cuda::current_stream(0). But if the code is on the default device, maybe that's not needed. 
+
+Alternatively, perhaps the function is torch::cuda::getStream(), but I'm not sure. 
+
+Alternatively, maybe the correct function is torch::cuda::getCurrentStream(). 
+
+Alternatively, maybe the user should use the function torch::cuda::getStream() with the current device. 
+
+Alternatively, perhaps the correct way is to use the function torch::cuda::current_stream(), but the user is missing an include. But since they have <torch/extension.h>, which should include the necessary headers, that's probably not the case. 
+
+Given the error, the fix is to replace torch::cuda::current_stream() with the correct function. 
+
+Another possibility: maybe the function is in the torch:: namespace, not torch::cuda. Like torch::current_stream(). 
+
+Wait, perhaps the correct syntax is torch::cuda::current_stream(). But maybe the user is using an older version where the function is named differently. 
+
+Alternatively, maybe the function is torch::cuda::getStream(), but I'm not sure. 
+
+Alternatively, perhaps the correct function is torch::cuda::getCurrentStream(), but the user needs to cast it to a cudaStream_t. 
+
+Alternatively, maybe the function is torch::cuda::current_stream(), but the user needs to include <torch/cuda/streams.h> or another header. 
+
+Wait, the code includes <torch/extension.h>, which should include all necessary headers for basic operations. 
+
+Hmm. Let me think of an example from PyTorch's documentation. 
+
+Looking at the PyTorch C++ extensions documentation, when launching a kernel, the stream is typically obtained via torch::cuda::getCurrentCUDAStream(). 
+
+Wait, perhaps the correct function is at::cuda::getCurrentCUDAStream(). 
+
+Alternatively, maybe the function is torch::cuda::current_stream(). But the error says that torch::cuda doesn't have that member. 
+
+Alternatively, maybe the correct function is torch::cuda::getStream(), but I'm not sure. 
+
+Alternatively, perhaps the user should use the function torch::cuda::getCurrentStream(), but that's not the case. 
+
+Alternatively, maybe the function is torch::cuda::current_stream(), but the user is using an older version of PyTorch where the API was different. 
+
+Alternatively, perhaps the correct function is torch::cuda::getStream(), but I'm not sure. 
+
+Alternatively, maybe the user should use the function torch::cuda::getCurrentStream() without the 'CUDA' part. 
+
+Alternatively, perhaps the correct function is at::cuda::getCurrentStream(). 
+
+Hmm, this is a bit confusing. Let me try to think of the correct way. 
+
+In the PyTorch C++ API, to get the current CUDA stream, the function is typically in the at namespace. For example:
+
+cudaStream_t stream = at::cuda::getCurrentCUDAStream();
+
+So the code should use that. 
+
+Therefore, changing the line to:
+
+matmul3d_kernel<<<blocks, threads, shared_mem, at::cuda::getCurrentCUDAStream()>>>(...
+
+That should fix the error. 
+
+So the fix is to replace torch::cuda::current_stream() with at::cuda::getCurrentCUDAStream(). 
+
+Alternatively, maybe the function is called current_stream in the at::cuda namespace. 
+
+Alternatively, perhaps the correct function is torch::cuda::current_stream(), but the user's PyTorch version is older and requires a different approach. 
+
+Alternatively, maybe the user should use the function torch::cuda::getStream(), but I'm not sure. 
+
+Alternatively, maybe the correct function is torch::cuda::current_stream(), but the user needs to include another header. 
+
+Alternatively, perhaps the function is in the torch:: namespace, like torch::current_stream(). 
+
+Alternatively, maybe the user should use the function torch::cuda::getStream(0). 
+
+Alternatively, perhaps the correct function is torch::cuda::getCurrentStream(). 
+
+Hmm, given the error message, the user's code is using torch::cuda::current_stream(), which the compiler says doesn't exist. So the correct function must be in a different namespace or have a different name. 
+
+Another approach: perhaps the correct function is torch::cuda::current_stream(), but the user needs to pass a device. Like torch::cuda::current_stream(0). 
+
+Alternatively, maybe the function is torch::cuda::current_stream(), but the user is missing a header. 
+
+Alternatively, perhaps the correct function is torch::cuda::getStream(), but I'm not sure. 
+
+Alternatively, maybe the user should use the function torch::cuda::getCurrentStream(), but that's not the case. 
+
+Alternatively, perhaps the correct function is at::cuda::current_stream(). 
+
+Alternatively, maybe the function is torch::cuda::getStream(), but I'm not sure. 
+
+Alternatively, perhaps the correct function is torch::cuda::getCurrentCUDAStream(). 
+
+Wait, let me think of an example from PyTorch's documentation. 
+
+Looking up, in the PyTorch C++ API, the function to get the current CUDA stream is indeed at::cuda::getCurrentCUDAStream(). 
+
+So the correct line would be:
+
+matmul3d_kernel<<<blocks, threads, shared_mem, at::cuda::getCurrentCUDAStream()>>>(...
+
+Therefore, replacing torch::cuda::current_stream() with at::cuda::getCurrentCUDAStream().
+
+That should fix the compilation error. 
+
+So the only change needed is in that line. The rest of the code is okay. 
+
+Therefore, the repaired code would have that line changed. 
+
+Now, I need to make sure that the rest of the code is as per the user's instructions. The user wants minimal changes, no performance optimizations, and the code must compile and run. 
+
+So the final answer is to replace that function call with the correct one. 
+
+Therefore, the corrected Python script will have the kernel launch line using at::cuda::getCurrentCUDAStream().
+</think>
+
+```python
+import torch
+import torch.nn as nn
+from torch.utils.cpp_extension import load_inline
+
+source = """
+#include <torch/extension.h>
+#include <cuda_runtime.h>
+
+__global__ void matmul3d_kernel(const float* A, const float* B, float* C, int N, int M, int K, int L) {
+    int blockId = blockIdx.x;
+    int n = blockId / M;
+    int m = blockId % M;
+    int l = threadIdx.x;
+    if (l >= L) return;
+
+    extern __shared__ float shared_data[];
+    float* shared_A = shared_data;
+    float* shared_B = shared_data + K;
+
+    // Load A_row into shared_A.
+    for (int k = threadIdx.x; k < K; k += blockDim.x) {
+        shared_A[k] = A[n * M * K + m * K + k];
+    }
+
+    // Load B_col into shared_B.
+    for (int k = threadIdx.x; k < K; k += blockDim.x) {
+        shared_B[k] = B[k * L + l];
+    }
+
+    __syncthreads();
+
+    float sum = 0.0f;
+    for (int k = 0; k < K; ++k) {
+        sum += shared_A[k] * shared_B[k];
+    }
+
+    C[n * M * L + m * L + l] = sum;
+}
+
+torch::Tensor matmul3d_cuda(torch::Tensor A, torch::Tensor B) {
+    int N = A.size(0);
+    int M = A.size(1);
+    int K = A.size(2);
+    int L = B.size(1);
+
+    auto C = torch::empty({N, M, L}, A.options());
+
+    dim3 blocks(N * M);
+    dim3 threads(L);
+    size_t shared_mem = 2 * K * sizeof(float);
+
+    matmul3d_kernel<<<blocks, threads, shared_mem, at::cuda::getCurrentCUDAStream()>>>(
+        A.data_ptr<float>(), B.data_ptr<float>(), C.data_ptr<float>(), N, M, K, L
+    );
+
+    return C;
+}
+"""
+
+cpp_src = (
+    "torch::Tensor matmul3d_cuda(torch::Tensor A, torch::Tensor B);"
+)
+
+matmul3d = load_inline(
+    name="matmul3d",
+    cpp_sources=cpp_src,
+    cuda_sources=source,
+    functions=["matmul3d_cuda"],
+    verbose=True,
+    extra_cflags=["-O3"],
+    extra_ldflags=[""],
+)
+
+class ModelNew(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.matmul3d = matmul3d
+
+    def forward(self, A, B):
+        return self.matmul3d.matmul3d_cuda(A, B)
+```

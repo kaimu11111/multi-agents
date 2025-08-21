@@ -1,0 +1,170 @@
+[Agent]: judge
+=== System Prompt ===
+You are a decision maker for CUDA kernel seed generation.
+Given the current list of candidate strategies, decide whether we should gather MORE strategies 
+(another analyzer round) or STOP and proceed to coding the seed kernel.
+
+Output format: return ONLY JSON like:
+{
+  "need_more": true,
+  "reason": "Why more strategies are needed or not needed, 1-2 sentences",
+  "confidence": 0.85
+}
+
+Decision principles:
+1) If there are gaps, vagueness, or lack of coverage, set need_more=true.
+2) Confidence score: 0.0 ~ 1.0, where 1.0 means absolutely certain.
+3) If round_idx >= max_rounds-1, lean toward need_more=false unless coverage is clearly insufficient.
+Be concise. No Markdown, no extra text.
+
+=== User Prompt ===
+# MODE: seed (Judge)
+Target GPU: **NVIDIA Quadro RTX 6000 (Turing)**
+• GPU Memory: 24GB GDDR6 with ECC
+• Memory Bandwidth: 624 GB/s
+• FP32 TFLOPS: 16.3
+• TF32 Tensor Core TFLOPS: — (Turing 不支持 TF32)
+• FP16 Tensor Core TFLOPS: 261 (522 with sparsity)*
+• FP8 Tensor Core TFLOPS: — (不支持 FP8)
+• INT8 Tensor Core TOPS: 261 (522 with sparsity)*
+• Register File Size: 64K 32-bit registers per SM
+• Maximum number of registers per thread: 255
+• Maximum number of thread blocks per SM: 32
+• Shared memory capacity per SM: 64 KB
+• Maximum shared memory per thread block: 64 KB
+round_idx: 0
+max_rounds: 3
+k: 5
+
+# CURRENT STRATEGIES (deduped, atomic)
+[
+  "[tiling] Use 2D block (32x8) with tile sizes BLOCK_M=16, BLOCK_N=16, BLOCK_K=4 to exploit shared memory and maintain coalesced access",
+  "[smem] Allocate 32KB shared memory per block for A/B tiles with 16B alignment to avoid bank conflicts",
+  "[vectorize] Use float4 vector loads for A/B elements (requires 16B alignment fallback for non-aligned data)",
+  "[coalesce] Order thread computation along row-major for A and column-major for B to ensure coalesced global reads",
+  "[guard] Add lane predication in K-loop boundary cases to prevent out-of-bounds accesses"
+]
+
+# ARCHITECTURE FILE (verbatim)
+```python
+import torch
+import torch.nn as nn
+from torch.utils.cpp_extension import load_inline
+
+source = """
+#include <torch/extension.h>
+#include <cuda_runtime.h>
+
+template <typename scalar_t>
+__global__ void batched_matmul_kernel(
+    const scalar_t* __restrict__ A,
+    const scalar_t* __restrict__ B,
+    scalar_t* __restrict__ C,
+    int N, int M, int K, int L,
+    int lda, int ldb, int ldc) {
+
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (idx >= N * M * L) return;
+
+    int i = idx / (M * L);
+    int rem = idx % (M * L);
+    int j = rem / L;
+    int l = rem % L;
+
+    scalar_t sum = 0.0;
+    for (int k = 0; k < K; ++k) {
+        sum += A[i * lda + j * K + k] * B[k * ldb + l];
+    }
+    C[i * ldc + j * L + l] = sum;
+}
+
+torch::Tensor batched_matmul_cuda(
+    torch::Tensor A,
+    torch::Tensor B) {
+
+    int N = A.size(0);
+    int M = A.size(1);
+    int K_A = A.size(2);
+    int K_B = B.size(0);
+    int L = B.size(1);
+
+    assert(K_A == K_B);
+
+    auto C = torch::empty({N, M, L}, A.options());
+
+    int threads_per_block = 256;
+    int num_elements = N * M * L;
+    int num_blocks = (num_elements + threads_per_block - 1) / threads_per_block;
+
+    AT_DISPATCH_FLOATING_TYPES(A.scalar_type(), "batched_matmul_cuda", ([&] {
+        batched_matmul_kernel<scalar_t><<<num_blocks, threads_per_block>>>(
+            A.data_ptr<scalar_t>(),
+            B.data_ptr<scalar_t>(),
+            C.data_ptr<scalar_t>(),
+            N, M, K_A, L,
+            A.stride(0),
+            B.stride(0),
+            C.stride(0)
+        );
+    }));
+
+    return C;
+}
+"""
+
+cpp_src = (
+    "torch::Tensor batched_matmul_cuda(torch::Tensor A, torch::Tensor B);"
+)
+
+batched_matmul = load_inline(
+    name="batched_matmul",
+    cpp_sources=cpp_src,
+    cuda_sources=source,
+    functions=["batched_matmul_cuda"],
+    verbose=True,
+    extra_cflags=["-O3"],
+    extra_ldflags=[""]
+)
+
+class ModelNew(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.batched_matmul = batched_matmul
+
+    def forward(self, A, B):
+        return self.batched_matmul.batched_matmul_cuda(A, B)
+
+```
+
+# OUTPUT (STRICT)
+Return ONLY JSON:
+```json
+{
+  "need_more": true|false,
+  "reason": "short reason (1-2 sentences)",
+  "confidence": float between 0.0 and 1.0
+}
+```
+
+=== Raw Reply ===
+Okay, let's see. The user is asking whether we need more strategies for the CUDA kernel seed generation or if we should stop and proceed to coding. The current strategies are listed, and the architecture file is provided. 
+
+First, I need to check the decision principles. The round index is 0, and max_rounds is 3, so we're not near the maximum yet. The target GPU is a Quadro RTX 6000 with Turing architecture. The current strategies include tiling, shared memory allocation, vectorization, coalesced access, and lane predication. 
+
+Looking at the architecture code, the kernel is a batched matrix multiplication. The existing strategies address tiling, shared memory usage, vectorization, and memory coalescing. However, I should check if there are any gaps. 
+
+The kernel currently uses a straightforward approach without shared memory optimizations. The existing strategies mention using shared memory, but maybe the current strategies don't cover all aspects. For example, the tiling strategy uses 2D blocks, but maybe the thread indexing or block distribution isn't optimal. Also, the maximum number of registers per thread is 255, so register usage might be an issue if the kernel uses too many. The current strategies don't mention register usage optimization. 
+
+Additionally, the problem involves batched operations, so handling the batch dimension efficiently might require more strategies. The current strategies don't address bank conflicts beyond alignment, or potential loop unrolling. Also, since Turing supports FP16 and INT8 Tensor Cores, but the code is in FP32, maybe using mixed precision isn't considered here, but the problem might not require it. 
+
+The reason to need more strategies could be that the current list doesn't cover all possible optimization areas like register spilling prevention, loop tiling strategies for better cache use, or handling of the batch dimension's parallelism. Since round_idx is 0, it's early, so gathering more strategies would help fill gaps. The confidence is high because there are still potential areas to explore.
+</think>
+
+```json
+{
+  "need_more": true,
+  "reason": "Current strategies lack coverage on register usage optimization, batch dimension parallelism, and potential loop unrolling for compute-bound kernels. Gaps exist in handling thread indexing for 2D blocks.",
+  "confidence": 0.9
+}
+```

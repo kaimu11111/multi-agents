@@ -1,0 +1,1400 @@
+[Agent]: coder
+=== System Prompt ===
+You are a senior CUDA-kernel optimisation specialist. Your job is to generate a high-quality,
+compilable, and runnable Python script that builds and launches **hand-written CUDA kernels**.
+
+
+IMPORTANT:
+Do not think too much. Think a little then give the one—fenced Python block.
+The output must be exactly one fenced code block starting with ```python and ending with ```.
+```python
+# <complete ModelNew code>
+```
+
+=== User Prompt ===
+You are a CUDA‑kernel optimisation specialist.
+Target GPU: **NVIDIA Quadro RTX 6000 (Turing)**
+• GPU Memory: 24GB GDDR6 with ECC
+• Memory Bandwidth: 624 GB/s
+• FP32 TFLOPS: 16.3
+• TF32 Tensor Core TFLOPS: — (Turing 不支持 TF32)
+• FP16 Tensor Core TFLOPS: 261 (522 with sparsity)*
+• FP8 Tensor Core TFLOPS: — (不支持 FP8)
+• INT8 Tensor Core TOPS: 261 (522 with sparsity)*
+• Register File Size: 64K 32-bit registers per SM
+• Maximum number of registers per thread: 255
+• Maximum number of thread blocks per SM: 32
+• Shared memory capacity per SM: 64 KB
+• Maximum shared memory per thread block: 64 KB
+
+Task
+----
+Generate **hand‑written CUDA kernels** that replace *all* PyTorch operator(s)
+inside the original `class Model` (shown later).  You may fuse multiple
+operators into a single kernel if that yields better performance.  Leave any
+non‑replaced parts of the model unchanged.
+
+OUTPUT RULES (STRICT) ────────────────────────────────────────────────
+1. Reply with **one—and only one—fenced Python block**.  No prose.
+2. The block must be directly runnable:
+       python model_new.py
+3. Inside the block, follow **exactly** this order:
+   1. Imports – `torch`, `torch.nn`, `load_inline`.
+   2. `source` – triple‑quoted CUDA string(s) (kernel + host wrapper).
+   3. `cpp_src` – prototypes for *all* kernels you expose.
+   4. **One** `load_inline` call per kernel group.
+   5. `class ModelNew(nn.Module)` – mirrors original inputs/outputs but calls
+      your CUDA kernels.
+4. **Do NOT include** testing code, `if __name__ == "__main__"`, or extra prose.
+
+Few‑shot example (reference only – do **not** echo):
+**Original**
+```python
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+
+class Model(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+
+    def forward(self, a, b):
+        return a + b
+
+
+def get_inputs():
+    # randomly generate input tensors based on the model architecture
+    a = torch.randn(1, 128).cuda()
+    b = torch.randn(1, 128).cuda()
+    return [a, b]
+
+
+def get_init_inputs():
+    # randomly generate tensors required for initialization based on the model architecture
+    return []
+```
+**Optimised**
+```python
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.utils.cpp_extension import load_inline
+
+# Define the custom CUDA kernel for element-wise addition
+source = """
+#include <torch/extension.h>
+#include <cuda_runtime.h>
+
+__global__ void elementwise_add_kernel(const float* a, const float* b, float* out, int size) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < size) {
+        out[idx] = a[idx] + b[idx];
+    }
+}
+
+torch::Tensor elementwise_add_cuda(torch::Tensor a, torch::Tensor b) {
+    auto size = a.numel();
+    auto out = torch::zeros_like(a);
+
+    const int block_size = 256;
+    const int num_blocks = (size + block_size - 1) / block_size;
+
+    elementwise_add_kernel<<<num_blocks, block_size>>>(a.data_ptr<float>(), b.data_ptr<float>(), out.data_ptr<float>(), size);
+
+    return out;
+}
+"""
+
+cpp_src = (
+    "torch::Tensor elementwise_add_cuda(torch::Tensor a, torch::Tensor b);"
+)
+
+# Compile the inline CUDA code for element-wise addition
+elementwise_add = load_inline(
+    name="elementwise_add",
+    cpp_sources=cpp_src,
+    cuda_sources=source,
+    functions=["elementwise_add_cuda"],
+    verbose=True,
+    extra_cflags=[""],
+    extra_ldflags=[""],
+)
+
+
+class ModelNew(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.elementwise_add = elementwise_add
+
+    def forward(self, a, b):
+        return self.elementwise_add.elementwise_add_cuda(a, b)
+```
+
+Target architecture (to optimise):
+```python
+import torch
+import torch.nn as nn
+
+class Model(nn.Module):
+    """
+    Performs 3D tensor-matrix multiplication.
+    """
+    def __init__(self):
+        super(Model, self).__init__()
+
+    def forward(self, A, B):
+        """
+        Performs 3D tensor-matrix multiplication.
+
+        Args:
+            A (torch.Tensor): Input 3D tensor of shape (N, M, K).
+            B (torch.Tensor): Input matrix of shape (K, L).
+
+        Returns:
+            torch.Tensor: Output tensor of shape (N, M, L), resulting from the multiplication of A and B along the last dimension of A.
+        """
+        return torch.matmul(A, B)
+
+N = 16
+M = 1024
+K = 2048
+L = 768
+
+def get_inputs():
+    A = torch.rand(N, M, K)
+    B = torch.rand(K, L)
+    return [A, B]
+
+def get_init_inputs():
+    return []  # No special initialization inputs needed
+```
+Now output **only** the complete, runnable `ModelNew` script that satisfies
+**ALL OUTPUT RULES (STRICT)** above.
+# ==========================================================
+# OUTPUT FORMAT – copy verbatim
+Return **exactly one** fenced block labelled `python`.  No text before or after.
+Use this skeleton (the model must fill it):
+
+```python
+# <complete ModelNew code>
+```
+# ==========================================================
+
+=== Raw Reply ===
+Okay, I need to optimize the given PyTorch model which does a 3D tensor-matrix multiplication using a custom CUDA kernel. The original code uses torch.matmul(A, B), where A is (N, M, K) and B is (K, L), resulting in (N, M, L). The goal is to replace this with a hand-written CUDA kernel for better performance on the specified Quadro RTX 6000 GPU.
+
+First, I should understand the computation. The matmul between A and B is essentially for each element in the output tensor, which is N x M x L, each element is the dot product of the K elements from A's last dimension and B's rows. Since A is 3D, this is a batched matrix multiplication where each batch is of size M x K multiplied by K x L, resulting in M x L for each batch. So, the operation can be viewed as performing M*K*L multiplications and accumulations per batch, with N batches.
+
+The challenge is to write a CUDA kernel that efficiently handles this computation. Let's think about the kernel structure. The output tensor has dimensions N, M, L. Each thread can be responsible for computing one element of the output. Alternatively, we can tile the computation to better utilize shared memory and coalesced memory access.
+
+But given the problem constraints, maybe a straightforward approach is better first, then optimize. Let's see.
+
+The kernel needs to compute for each output element (n, m, l) the sum over k of A[n][m][k] * B[k][l].
+
+The total number of elements in the output is N*M*L. Each thread can compute one element. The grid and block dimensions need to be set accordingly.
+
+But with large dimensions (like M=1024, K=2048, L=768), the number of threads could be very high. Let's calculate the total threads needed. For N=16, M=1024, L=768: 16*1024*768 = 12,582,912 threads. That's manageable as the maximum threads per block is 1024, so blocks would be around 12,582,912 / 1024 ≈ 12,288 blocks. The maximum number of blocks per SM is 32, but the total number of SMs on Quadro RTX 6000 is 46, so total blocks can be handled.
+
+Alternatively, maybe a better approach is to have each thread handle a row of the output. For example, each thread could compute a row (M elements) in the L dimension. Wait, perhaps a better way is to structure the kernel so that each thread block handles a tile of the computation.
+
+Alternatively, since the matrix B is KxL, and A is N x M x K, the multiplication can be viewed as for each n and m, compute the MxL matrix by multiplying the MxK slice of A with the KxL matrix B. So, for each n and m, the computation is a matrix multiplication of size MxK * KxL, resulting in MxL. 
+
+But doing this for each n and m might be inefficient. Alternatively, the kernel can be structured to process each element (n, m, l) by having each thread compute the sum over k for that (m, l) pair. 
+
+Wait, perhaps the best way is to have each thread compute one element of the output. Let's see:
+
+The output is of size N x M x L. Each element (n, m, l) is the sum over k from 0 to K-1 of A[n][m][k] * B[k][l].
+
+So, for each thread, given an index, we can compute n, m, l from the thread index. The kernel would loop over k and accumulate the product.
+
+But this approach might have a lot of divergence and be inefficient because each thread is doing a loop over K elements. Since K is 2048, that's 2048 iterations per thread. That could be slow. So, perhaps we need a better approach.
+
+Alternatively, we can use shared memory to cache parts of B or A to reduce global memory accesses. Since B is a matrix that's KxL, and K is 2048, which is large, but L is 768. Maybe we can tile the computation in such a way that each block processes a tile of the output.
+
+Another idea: The multiplication can be expressed as A (N, M, K) @ B (K, L) = (N, M, L). So, for each n, m, l, the result is sum_{k} A[n][m][k] * B[k][l].
+
+To compute this efficiently in CUDA, perhaps we can structure the kernel so that each thread block handles a block of M and L. Let me think of the dimensions.
+
+Suppose we have a block size of 256 threads. Each thread can be responsible for a certain k, but that might not be straightforward. Alternatively, we can use a tiled approach where each thread block computes a tile of the output matrix for a particular n, m, l.
+
+Alternatively, let's think of the problem as a batched GEMM (General Matrix Multiply). The standard approach for such operations is to use cublas, but since we need to write a custom kernel, perhaps we can structure it similarly.
+
+Wait, but the user wants to replace all PyTorch operators with hand-written kernels. So, in this case, the matmul is the only operation to replace.
+
+The standard way to compute A @ B where A is (N, M, K) and B is (K, L) is equivalent to (A.view(N*M, K) @ B).view(N, M, L). So, the computation is a batch of N*M matrices each of size K, multiplied by a single KxL matrix. So, each of the N*M rows in the batched matrix is multiplied by B.
+
+Hmm, perhaps structuring the kernel as a batched matrix multiplication where each batch is a row of the A tensor. Wait, but each row in the batched view (N*M, K) is a vector, so the multiplication with B (K, L) would give a (N*M, L) matrix, which is then reshaped.
+
+Alternatively, the kernel can process each element (n, m, l) by having each thread compute the sum over k. But with K=2048, this would require 2048 operations per thread. That's a lot. So, perhaps we can vectorize this.
+
+Alternatively, use shared memory to cache parts of B or A. Let's think of the following approach:
+
+Each thread block can handle a block of the output. Let's say each block computes a tile of M x L elements. Wait, but M is 1024, which is large. Maybe split into smaller tiles.
+
+Alternatively, each thread can compute a single element (n, m, l) by looping over k. To reduce the number of loops, we can have each thread process multiple k indices. For example, using unrolling or using a loop with a step size.
+
+Alternatively, use a tiled approach where each thread block is responsible for a tile of the output. Let's think of the output as N x M x L. For each n, we can process the MxL matrix. Let's consider a block processing a tile of M x L. But M is 1024, which is big. Maybe split into smaller tiles.
+
+Alternatively, for each n, m, l, the computation is sum_{k} A[n][m][k] * B[k][l]. So, for each (m, l), the sum over k. So, perhaps for each (m, l), we can compute the sum across all k. Then, for each n, the same computation is done. Wait, but A's first dimension is N, so each n has its own A[n][m][k]. So, the computation for each n is independent. So, the kernel can process each n in parallel.
+
+Hmm, perhaps the best approach is to structure the kernel so that each thread computes one element of the output. Let's see:
+
+The total number of elements is N * M * L = 16 * 1024 * 768 = 12,582,912 elements. Each thread can compute one element. The kernel would have a grid size of (ceil(N*M*L / threads_per_block)), with threads per block, say 256 or 512.
+
+Each thread would compute the index (n, m, l) from its global thread ID. Then, for each k from 0 to K-1, accumulate A[n][m][k] * B[k][l].
+
+But with K=2048, this would require 2048 iterations per thread. That's a lot of loops, which might be slow. So, this approach might not be efficient.
+
+Alternative idea: Use shared memory to cache B's rows. Since B is KxL, and K is 2048, but L is 768. If we can load B into shared memory, but K is too large (2048 rows), so that's 2048 * 768 elements, which is 1.56 million elements. That's way too big for shared memory (each SM has 64KB, which is 16384 32-bit floats). So that's not feasible.
+
+Hmm, maybe we can tile the K dimension. Let's think of the computation as:
+
+For each element (n, m, l), the sum over k is A[n][m][k] * B[k][l]. 
+
+Suppose we have a block of threads that handle a tile of the K dimension. Let's say each block processes a tile of size TILE_K. Each thread in the block can process a portion of the K elements. 
+
+Alternatively, the kernel can be structured as follows:
+
+Each thread block is responsible for a block of the output's M and L dimensions. For example, each block handles a block of size MB x LB in the M and L dimensions. Then, each thread in the block can compute a part of the sum over K.
+
+Wait, perhaps a better approach is to use a tiled matrix multiplication approach similar to the standard matrix multiplication kernel. Let me think of the problem as a batched matrix multiplication where each batch is N, and each batch has a matrix of size MxK multiplied by KxL. 
+
+The standard approach for matrix multiplication on GPU uses tiling and shared memory to load tiles of the matrices into shared memory, then compute the dot product. 
+
+In this case, for each batch (n), the matrix A[n] is MxK, and B is KxL. The result for each n is MxL. 
+
+So, for each n, we can perform a matrix multiplication of MxK * KxL. 
+
+The kernel can be structured to handle each batch (n) in parallel. For each n, we can launch a grid of blocks that compute the MxL matrix. 
+
+Each block can handle a tile of the output matrix. Let's say each block computes a tile of size TB_M x TB_L. Each thread in the block computes a single element in this tile. 
+
+Alternatively, each block can handle a tile of the K dimension. Let me think of the standard tiled matrix multiply approach.
+
+The standard approach for matrix multiplication (C = A * B) uses blocks of threads that each compute a tile of the output matrix. Each thread in the block computes a single element of the tile. The tiles are of size TB_M x TB_N (assuming A is MxK and B is KxL, so C is MxL). 
+
+Wait, in this case, for each n, the matrix multiplication is MxK * KxL → MxL. So, for each n, the computation is a matrix multiply of M rows (each of length K) times B's columns (each of length K). 
+
+The standard tiled approach would have each block handle a tile of the output matrix. Let's say each block handles a tile of size TB_M x TB_L. Each thread in the block computes a single element in this tile. 
+
+The block would have a grid of threads, say TB_M x TB_L threads, but that might be too big. Alternatively, the block can have a 2D grid of threads, each handling a sub-tile. 
+
+Alternatively, the block can have a 1D grid of threads, each handling a portion of the computation. 
+
+Let me think of the following approach for a single matrix multiply (for a single n):
+
+The output is MxL. Each thread block processes a tile of size TB_M x TB_L. The block's threads can be arranged in a 2D grid of threads, say TB_M_threads x TB_L_threads, but perhaps a 1D arrangement is easier. 
+
+Each thread in the block is responsible for a single element in the tile. The tile is of size TB_M x TB_L. The total number of tiles would be ceil(M / TB_M) * ceil(L / TB_L). 
+
+Each thread computes the sum over k of A[m][k] * B[k][l], where m and l are the coordinates within the tile. 
+
+To compute this efficiently, the block can load tiles of A and B into shared memory. 
+
+For example, each block loads a tile of A of size TB_M x TILE_K and a tile of B of size TILE_K x TB_L. The TILE_K is the tile size along the K dimension. 
+
+The TILE_K should be a multiple of the warp size (32) for coalesced memory access. 
+
+The steps would be:
+
+1. For each block, determine the tile of the output matrix it is responsible for (starting m and l indices).
+
+2. Initialize a shared memory array for the A tile (TB_M x TILE_K) and B tile (TILE_K x TB_L).
+
+3. Each thread in the block loads a portion of the A and B tiles into shared memory. 
+
+4. Synchronize to ensure shared memory is loaded.
+
+5. Compute the dot product for the current tile elements using the shared memory tiles.
+
+6. Repeat for all tiles along the K dimension (since the K dimension is larger than the tile size).
+
+This approach reduces global memory accesses by reusing the tiles in shared memory across multiple K tiles.
+
+However, since in our case, the A matrix for each n is MxK, and B is KxL, the K dimension is 2048. So, the TILE_K should be chosen such that the shared memory can hold the tiles. 
+
+The shared memory per block is 64KB (for Turing architecture). Each float is 4 bytes. 
+
+Suppose we choose TILE_K = 32. Then, the A tile is TB_M x 32 floats. Let's say TB_M is 16 and TB_L is 16. Then the A tile size is 16*32 = 512 floats (2048 bytes), and the B tile is 32*16 = 512 floats (2048 bytes). Total shared memory needed is 4096 bytes, which is acceptable. 
+
+The total number of tiles along K would be ceil(2048 / 32) = 64. 
+
+Each iteration of the loop over K tiles would process a TILE_K chunk. 
+
+This approach would be more efficient as it reduces the number of global memory accesses and leverages shared memory for caching.
+
+Now, considering that this needs to be done for each n in N=16, we can structure the kernel to process each n in parallel. 
+
+So, the overall plan is:
+
+- The kernel will process each n in parallel. Each n is handled by a separate grid of blocks.
+
+- For each n, the kernel launches a grid of blocks to compute the MxL matrix multiply between A[n] and B.
+
+- Each block in the grid computes a tile of the MxL matrix.
+
+- The block uses shared memory to load tiles of A and B, and compute the dot products.
+
+Now, let's structure the kernel code.
+
+First, the kernel function:
+
+__global__ void matmul3d_kernel(const float* A, const float* B, float* C, int N, int M, int K, int L) {
+
+    // Each thread block processes a tile of the output matrix for a given n.
+
+    // blockIdx.x corresponds to the n index.
+
+    int n = blockIdx.x;
+
+    // The remaining blocks handle the tiles of the MxL matrix for this n.
+
+    // The block's responsibility is a tile in the M and L dimensions.
+
+    // Determine the tile's starting m and l indices.
+
+    int tile_m = blockIdx.y * TB_M;
+
+    int tile_l = blockIdx.z * TB_L;
+
+    // Each thread in the block computes a (m, l) element in the tile.
+
+    int tx = threadIdx.x;
+
+    int ty = threadIdx.y;
+
+    // Compute the m and l indices within the block's tile.
+
+    int m = tile_m + tx;
+
+    int l = tile_l + ty;
+
+    // If beyond the matrix dimensions, return early.
+
+    if (m >= M || l >= L) return;
+
+    // Shared memory for tiles of A and B.
+
+    __shared__ float shared_A[TB_M][TILE_K + 1]; // +1 for padding
+
+    __shared__ float shared_B[TILE_K][TB_L + 1]; // +1 for padding
+
+    float sum = 0.0f;
+
+    for (int k_tile = 0; k_tile < K; k_tile += TILE_K) {
+
+        // Load the current tile of A and B into shared memory.
+
+        // Each thread loads a portion of A and B.
+
+        // For A: each thread in the block loads a row of the A tile.
+
+        // The A tile is TB_M rows x TILE_K columns.
+
+        // Each thread (tx, ty) in the block can load A's element at (tx, k_tile + ty) ?
+
+        // Wait, perhaps better to have each thread load a single element.
+
+        // Let's think of the A tile as TB_M rows (m indices) and TILE_K columns (k indices).
+
+        // Each thread (tx, ty) in the block can load A's element at (tile_m + tx, k_tile + ty) ?
+
+        // Wait, maybe better to have each thread in the block load a single element from A and B.
+
+        // For A:
+
+        int k_start = k_tile;
+
+        int k_end = min(k_tile + TILE_K, K);
+
+        int k_size = k_end - k_start;
+
+        // For A's tile:
+
+        // The row in A is m (tile_m + tx), and the column is k in [k_start, k_end).
+
+        // Each thread (tx, ty) can load A's element at (m, k) where m is tile_m + tx, and k is k_start + ty ?
+
+        // But the shared_A is TB_M rows x TILE_K columns. So each thread in the block can be responsible for a (row, column) in the shared_A.
+
+        // Let's have the threads load the A tile:
+
+        for (int i = 0; i < (TILE_K + blockDim.x - 1)/blockDim.x; i++) {
+
+            int k = k_start + i * blockDim.x + tx;
+
+            if (k < k_end) {
+
+                int a_row = tile_m + tx;
+
+                shared_A[tx][i] = A[ n * M * K + a_row * K + k ];
+
+            }
+
+        }
+
+        // Similarly for B's tile:
+
+        // B is K x L. The current tile is columns l in [tile_l, tile_l + TB_L), and rows k in [k_start, k_end).
+
+        // The B tile is TILE_K rows (k) x TB_L columns (l).
+
+        // Each thread (tx, ty) can load B's element at (k, l) where k is in [k_start, k_end), and l is in [tile_l, tile_l + TB_L).
+
+        // So for B's shared memory:
+
+        for (int i = 0; i < (TB_L + blockDim.y - 1)/blockDim.y; i++) {
+
+            int l_col = tile_l + i * blockDim.y + ty;
+
+            if (l_col < L) {
+
+                int k_row = k_start + ty;
+
+                if (k_row < k_end) {
+
+                    shared_B[ty][i] = B[ k_row * L + l_col ];
+
+                }
+
+            }
+
+        }
+
+        // Wait, this might not be the best way. Maybe better to have each thread load a single element.
+
+        // Alternatively, use a 2D grid of threads to load the tiles.
+
+        // This part is getting complicated. Maybe better to use a 2D thread block.
+
+        // Let's assume the block is 2D with dimensions (TB_M, TB_L). So each thread (tx, ty) corresponds to (m, l) in the tile.
+
+        // Then, for the A tile:
+
+        // Each thread (tx, ty) can load A's element at (tile_m + tx, k) for k in the current k_tile.
+
+        // But since the A tile is TB_M rows and TILE_K columns, each thread in the block can load a row of the A tile.
+
+        // Alternatively, each thread in the block can load a single element from A and B.
+
+        // Maybe this is getting too complex. Let me think of a simpler approach.
+
+        // Let me try to structure the kernel with a 2D block of threads (TB_M, TB_L). 
+
+        // The block dimensions are (TB_M, TB_L).
+
+        // Each thread (tx, ty) in the block corresponds to the (m, l) position in the tile.
+
+        // The shared memory for A is TB_M rows x TILE_K columns.
+
+        // The shared memory for B is TILE_K rows x TB_L columns.
+
+        // For each k_tile:
+
+        // Load the A tile (TB_M rows, TILE_K columns) starting at k = k_tile.
+
+        // Load the B tile (TILE_K rows, TB_L columns) starting at k = k_tile.
+
+        // Then, each thread computes the sum over the TILE_K elements for their (m, l).
+
+        // So, for the current k_tile:
+
+        // Each thread (tx, ty) in the block loads A's element at (tile_m + tx, k) where k is in [k_tile, k_tile + TILE_K -1].
+
+        // Similarly, B's element at (k, tile_l + ty).
+
+        // Wait, but how to distribute the loading of the tiles into shared memory.
+
+        // Let's see:
+
+        // For the A tile:
+
+        // The A tile is rows from tile_m to tile_m + TB_M -1, and columns from k_tile to k_tile + TILE_K -1.
+
+        // Each thread (tx, ty) can load A's element at (tile_m + tx, k_tile + ty).
+
+        // But if the block has TB_M x TB_L threads, then ty can go up to TB_L-1, but the TILE_K may be larger than TB_L.
+
+        // Hmm, perhaps this approach won't work. Maybe better to have the block's threads load the tiles in a way that each thread is responsible for a single element.
+
+        // Alternatively, use a 1D thread block and have each thread handle multiple elements.
+
+        // This is getting too time-consuming. Maybe I should look for a standard kernel example for matrix multiplication.
+
+        // Alternatively, let's proceed with a simpler approach where each thread computes one element by looping over K, but optimize the loop.
+
+        // Let me try that approach first, even if it's not the most efficient, but see if it can be made to work.
+
+        // So, the kernel would be:
+
+        __global__ void matmul3d_kernel(const float* A, const float* B, float* C, int N, int M, int K, int L) {
+
+            int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+            if (idx >= N*M*L) return;
+
+            int n = idx / (M*L);
+
+            int rem = idx % (M*L);
+
+            int m = rem / L;
+
+            int l = rem % L;
+
+            float sum = 0.0f;
+
+            for (int k = 0; k < K; ++k) {
+
+                sum += A[ n*M*K + m*K + k ] * B[ k*L + l ];
+
+            }
+
+            C[ n*M*L + m*L + l ] = sum;
+
+        }
+
+        // This is straightforward but with K=2048 iterations per thread. That's 2048 loops, which could be slow.
+
+        // However, the Quadro RTX 6000 has a high FP32 TFLOPS (16.3), so maybe this is manageable, but perhaps not optimal.
+
+        // Let's see the number of threads needed. For N=16, M=1024, L=768, total elements are 16*1024*768 = ~12.5 million. 
+
+        // With a block size of 256, the number of blocks would be ~12.5e6 / 256 ≈ 48,828 blocks. That's a lot, but the GPU can handle it.
+
+        // However, the loop over K=2048 is a problem. Each thread would do 2048 iterations. The total FLOPS per thread is 2048 (multiply-add). 
+
+        // For 12.5e6 threads, that's 12.5e6 * 2048 = ~25.6e9 FLOPS. The GPU's FP32 TFLOPS is 16.3, so 16.3e12 FLOPS per second. 
+
+        // So 25.6e9 / 16.3e12 ≈ 0.00157 seconds, which is about 1.5 milliseconds. That's acceptable, but maybe we can do better.
+
+        // Alternatively, unroll the loop. For example, unroll by 4, so 512 iterations. But that might not help much.
+
+        // Another optimization: use vectorized loads. Since A and B are in row-major order, perhaps load multiple elements at once.
+
+        // Alternatively, use shared memory to cache B's columns. Since B is KxL, for a given l, the column is B[k][l] for all k. 
+
+        // For each l, the column is K elements. If we can load this into shared memory, but K is 2048, which is too big for shared memory (each SM has 64KB, which is 16384 floats). 
+
+        // 2048 elements per column, so for L=768 columns, that's way too much. So that's not feasible.
+
+        // Alternatively, for a given l, the B column can be loaded into shared memory for a block processing that l. But again, K is too big.
+
+        // Hmm, perhaps the initial approach is the simplest and can be made to work, even if not optimal. Let's proceed with that, but try to optimize the loop.
+
+        // To optimize the loop, we can use loop unrolling and/or use CUDA's built-in functions like __fma_rn (fused multiply-add).
+
+        // Also, the memory access patterns can be optimized. For A, the elements are accessed as A[n*M*K + m*K + k], which for a given n, m, the elements are contiguous in K. So for a given thread, the A elements are accessed in a contiguous manner. 
+
+        // Similarly, for B, the elements are B[k*L + l], so for a given l, the elements are contiguous in k. 
+
+        // So, for a thread processing (n, m, l), the A elements are contiguous in K, and the B elements are also contiguous in K for that l. 
+
+        // So, perhaps we can load the A and B elements in vectors to improve memory access.
+
+        // Alternatively, use pointer arithmetic to load the elements in a loop.
+
+        // Let me try to write the kernel with the simple approach first, then see if I can optimize it.
+
+        So, the kernel code would be as follows:
+
+        __global__ void matmul3d_kernel(const float* A, const float* B, float* C, int N, int M, int K, int L) {
+
+            int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+            if (idx >= N*M*L) return;
+
+            int n = idx / (M*L);
+
+            int rem = idx % (M*L);
+
+            int m = rem / L;
+
+            int l = rem % L;
+
+            float sum = 0.0f;
+
+            const float* A_row = A + n*M*K + m*K;
+
+            const float* B_col = B + l;
+
+            for (int k = 0; k < K; ++k) {
+
+                sum += A_row[k] * B_col[k * L]; // Wait, B is stored as K rows, each of L elements. So B[k][l] is at B[k*L + l]. 
+
+                // Wait, B is K rows, each of L elements. So B[k][l] is at B[k*L + l]. 
+
+                // So for a given l, the elements are B[0*L + l], B[1*L + l], ..., B[(K-1)*L + l]. 
+
+                // So the B_col pointer should be B + l, then each step adds L. 
+
+                // So B_col[k] = B[l + k*L]
+
+                // So the loop would be:
+
+                sum += A_row[k] * B_col[k * L + l]; // Wait, no. Wait, B is stored as a 1D array. 
+
+                // Let me clarify:
+
+                // B is a K x L matrix stored in row-major order. So B[k][l] is at position k*L + l.
+
+                // So for a given l, the elements are at positions l, L + l, 2L + l, etc. 
+
+                // So to get B[k][l], it's B[k*L + l].
+
+                // So in the loop over k, for each k, the B element is B[k*L + l].
+
+                // So the loop would be:
+
+                sum += A_row[k] * B[k*L + l];
+
+            }
+
+            C[n*M*L + m*L + l] = sum;
+
+        }
+
+        Wait, but in the code above, the B_col pointer is set to B + l, so B_col[k] would be B[l + k], which is not correct. 
+
+        So the correct way is to compute B[k*L + l] each time. 
+
+        Alternatively, precompute the offset for B:
+
+        int B_offset = l;
+
+        for (int k = 0; k < K; ++k) {
+
+            sum += A_row[k] * B[B_offset + k*L];
+
+        }
+
+        That might be better.
+
+        Now, the problem is that for each thread, this loop is 2048 iterations. To reduce the number of iterations, perhaps we can unroll the loop by a factor of 4 or 8. 
+
+        For example, unroll by 4:
+
+        for (int k = 0; k < K; k +=4) {
+
+            sum += A_row[k] * B[k*L + l];
+
+            sum += A_row[k+1] * B[(k+1)*L + l];
+
+            sum += A_row[k+2] * B[(k+2)*L + l];
+
+            sum += A_row[k+3] * B[(k+3)*L + l];
+
+        }
+
+        But this requires K to be a multiple of 4, but even if not, we can handle the remaining elements. 
+
+        However, this increases code complexity and may not be worth it unless the loop is a bottleneck.
+
+        Alternatively, use CUDA's __ldg (load global) to optimize memory access, but I'm not sure.
+
+        Another optimization is to use shared memory to cache the B column for a given l. Since for a given l, the B elements are spaced by L. 
+
+        For example, if we can load the B column (for a given l) into shared memory, then each thread can access it quickly. 
+
+        Let's see: For a given l, the B column has K elements. Since K is 2048, which is 8KB (since each float is 4 bytes), that's manageable in shared memory. 
+
+        So, for a block of threads processing multiple l's, perhaps we can load the B column into shared memory. 
+
+        Let me think of a block processing a tile of L elements. For example, each block processes a range of l values. 
+
+        Suppose the block has 256 threads, each handling a different l. 
+
+        Wait, but each thread is processing a different (n, m, l). 
+
+        Alternatively, let's structure the kernel so that each block handles a particular n and m, and all l's for that (n, m). 
+
+        For example, each block is responsible for a single (n, m) pair, and computes all L elements for that pair. 
+
+        The block has L threads, each computing one l. 
+
+        Then, for each thread in the block (handling l):
+
+        sum = 0.0f;
+
+        for (k=0; k<K; k++) {
+
+            sum += A[n*M*K + m*K +k] * B[k*L + l];
+
+        }
+
+        C[n*M*L + m*L + l] = sum;
+
+        This way, for a given (n, m), all l's are processed in parallel. 
+
+        The advantage is that the A_row (A[n*M*K + m*K +k]) is the same for all l's in the block. So, we can load this into shared memory once per block. 
+
+        Let's see:
+
+        The block size would be L threads (since L=768, which is manageable). 
+
+        Each block is assigned to a (n, m) pair. 
+
+        The grid size would be N*M blocks. 
+
+        Each block has L threads. 
+
+        The total threads would be N*M*L, which is the same as before. 
+
+        But the memory access for A would be better because the A_row is accessed sequentially for all k. 
+
+        Also, the B elements for each l can be accessed in a way that for a given k, all l's in the block access B[k*L + l], which is contiguous in memory. 
+
+        Hmm, perhaps this approach can be better. 
+
+        Let's structure the kernel as follows:
+
+        __global__ void matmul3d_kernel(const float* A, const float* B, float* C, int N, int M, int K, int L) {
+
+            int blockId = blockIdx.x;
+
+            int n = blockId / M;
+
+            int m = blockId % M;
+
+            int l = threadIdx.x;
+
+            if (l >= L) return;
+
+            float sum = 0.0f;
+
+            const float* A_row = A + n*M*K + m*K;
+
+            for (int k = 0; k < K; ++k) {
+
+                sum += A_row[k] * B[k*L + l];
+
+            }
+
+            C[n*M*L + m*L + l] = sum;
+
+        }
+
+        This way, each block handles a (n, m) pair, and each thread in the block handles a different l. 
+
+        The number of blocks is N*M = 16*1024 = 16,384 blocks. Each block has L=768 threads. 
+
+        The maximum number of threads per block is 1024, so 768 is okay. 
+
+        The total threads are 16,384 * 768 = 12,582,912, which is the same as before. 
+
+        The advantage here is that for each block, the A_row is the same for all threads, so it can be loaded into shared memory once per block. 
+
+        Let's try to optimize this by using shared memory for A_row:
+
+        __global__ void matmul3d_kernel(const float* A, const float* B, float* C, int N, int M, int K, int L) {
+
+            int blockId = blockIdx.x;
+
+            int n = blockId / M;
+
+            int m = blockId % M;
+
+            int l = threadIdx.x;
+
+            if (l >= L) return;
+
+            extern __shared__ float shared_A[];
+
+            // Each block needs to store K elements of A_row.
+
+            // The shared memory size per block is K floats.
+
+            // Since K=2048, each block needs 2048 * 4 bytes = 8KB of shared memory.
+
+            // The maximum shared memory per block is 64KB, so this is okay.
+
+            // Load A_row into shared memory.
+
+            for (int k = threadIdx.x; k < K; k += blockDim.x) {
+
+                shared_A[k] = A[n*M*K + m*K + k];
+
+            }
+
+            __syncthreads();
+
+            float sum = 0.0f;
+
+            for (int k = 0; k < K; ++k) {
+
+                sum += shared_A[k] * B[k*L + l];
+
+            }
+
+            C[n*M*L + m*L + l] = sum;
+
+        }
+
+        This way, the A_row is loaded into shared memory once per block, and then each thread can access it quickly. 
+
+        The shared memory size required is K * sizeof(float) = 2048 *4 = 8KB per block, which is within the 64KB limit. 
+
+        This reduces the number of global memory accesses for A from K per thread to K per block. 
+
+        That's a significant optimization. 
+
+        Now, the B accesses are still K per thread. 
+
+        To optimize B's accesses, perhaps we can also load B's columns into shared memory. 
+
+        For a given l, the B elements are B[0*L + l], B[1*L + l], ..., B[K*L + l]. 
+
+        For a given l, these are spaced by L elements. 
+
+        Since L=768, this is a stride of 768, which is not coalesced. 
+
+        To load these into shared memory, we can have each thread in the block (for a given l) load a portion of the B column. 
+
+        However, since each block is handling a specific l, this might not be feasible. 
+
+        Alternatively, for a block processing a particular l, we can load the B column into shared memory. 
+
+        But each block is handling a different l, so this would require per-block shared memory for B's column. 
+
+        The size would be K floats (2048 *4 = 8KB), same as A. 
+
+        So total shared memory per block would be 16KB (8KB for A and 8KB for B). 
+
+        Let's try that:
+
+        __global__ void matmul3d_kernel(const float* A, const float* B, float* C, int N, int M, int K, int L) {
+
+            int blockId = blockIdx.x;
+
+            int n = blockId / M;
+
+            int m = blockId % M;
+
+            int l = threadIdx.x;
+
+            if (l >= L) return;
+
+            extern __shared__ float shared_A[];
+
+            // shared_A is first K elements for A_row.
+
+            // shared_B is next K elements for B_col.
+
+            float* shared_B = shared_A + K;
+
+            // Load A_row into shared_A.
+
+            for (int k = threadIdx.x; k < K; k += blockDim.x) {
+
+                shared_A[k] = A[n*M*K + m*K + k];
+
+            }
+
+            // Load B_col into shared_B.
+
+            for (int k = threadIdx.x; k < K; k += blockDim.x) {
+
+                shared_B[k] = B[k*L + l];
+
+            }
+
+            __syncthreads();
+
+            float sum = 0.0f;
+
+            for (int k = 0; k < K; ++k) {
+
+                sum += shared_A[k] * shared_B[k];
+
+            }
+
+            C[n*M*L + m*L + l] = sum;
+
+        }
+
+        Now, the shared memory required is 2*K floats = 16KB per block. 
+
+        This reduces all global memory accesses to shared memory, which is faster. 
+
+        The loop now is over K elements, but with shared memory access, which is faster. 
+
+        This should significantly improve performance. 
+
+        The block size must be at least K to load the data, but since K=2048 and the block size is L=768, which is smaller than K, this won't work. 
+
+        Wait, the block size is L=768 threads. To load K=2048 elements into shared memory, each thread must load multiple elements. 
+
+        For example, for the A_row loading loop:
+
+        Each thread in the block (threadIdx.x from 0 to 767) will load K elements in steps of 768. 
+
+        So for K=2048, each thread will load ceil(2048/768) = 3 elements. 
+
+        So the loops for loading A and B into shared memory will work. 
+
+        This approach should be much faster because both A and B are in shared memory, and the loop is over K elements with fast access. 
+
+        Now, the shared memory size is 2048 * 2 * 4 bytes = 16KB, which is acceptable. 
+
+        This seems like a good optimization. 
+
+        Now, the kernel's shared memory size must be specified when launching it. 
+
+        The extern __shared__ float shared_A[] requires that the caller specifies the size. 
+
+        The required size is 2*K * sizeof(float). 
+
+        So when launching the kernel, we need to set the shared memory size to 2*K * 4 bytes. 
+
+        Let's compute that: 2*2048 *4 = 16384 bytes. 
+
+        So in the host code, when launching the kernel, we need to set the shared memory size. 
+
+        Now, putting this all together, the kernel code would be as above. 
+
+        Now, the host wrapper function needs to:
+
+        - Compute the grid and block dimensions.
+
+        The block dimension is L threads (since each block handles a (n,m) pair and each thread handles an l). 
+
+        The grid dimension is N*M blocks. 
+
+        The block size is L (768). 
+
+        However, the maximum number of threads per block is 1024, so 768 is okay. 
+
+        The maximum number of blocks per SM is 32, but the total number of blocks is N*M = 16*1024 = 16384. 
+
+        The Quadro RTX 6000 has 46 SMs, so the total number of blocks can be handled. 
+
+        Now, the host function:
+
+        torch::Tensor matmul3d_cuda(torch::Tensor A, torch::Tensor B) {
+
+            int N = A.size(0);
+
+            int M = A.size(1);
+
+            int K = A.size(2);
+
+            int L = B.size(1);
+
+            auto C = torch::empty({N, M, L}, A.options());
+
+            dim3 blocks(N * M);
+
+            dim3 threads(L);
+
+            size_t shared_mem = 2 * K * sizeof(float);
+
+            matmul3d_kernel<<<blocks, threads, shared_mem, at::cuda::getCurrentCUDAStream()>>>(
+
+                A.data_ptr<float>(), B.data_ptr<float>(), C.data_ptr<float>(), N, M, K, L
+
+            );
+
+            return C;
+
+        }
+
+        Now, checking the dimensions:
+
+        A has shape (N, M, K), so A.size(0)=N, A.size(1)=M, A.size(2)=K.
+
+        B has shape (K, L), so B.size(1)=L.
+
+        The output C has shape (N, M, L).
+
+        The kernel's parameters are correct. 
+
+        Now, the CUDA kernel code needs to be written with the above logic. 
+
+        Also, need to ensure that the shared memory is properly allocated. 
+
+        Now, let's write the full code. 
+
+        The source code for the CUDA kernel and the host function:
+
+        The source code would be:
+
+        #include <torch/extension.h>
+        #include <cuda_runtime.h>
+
+        template<int K>
+        __global__ void matmul3d_kernel(const float* A, const float* B, float* C, int N, int M, int L) {
+
+            int blockId = blockIdx.x;
+
+            int n = blockId / M;
+
+            int m = blockId % M;
+
+            int l = threadIdx.x;
+
+            if (l >= L) return;
+
+            extern __shared__ float shared_data[];
+
+            float* shared_A = shared_data;
+
+            float* shared_B = shared_data + K;
+
+            // Load A_row into shared_A.
+
+            for (int k = threadIdx.x; k < K; k += blockDim.x) {
+
+                shared_A[k] = A[n*M*K + m*K + k];
+
+            }
+
+            // Load B_col into shared_B.
+
+            for (int k = threadIdx.x; k < K; k += blockDim.x) {
+
+                shared_B[k] = B[k*L + l];
+
+            }
+
+            __syncthreads();
+
+            float sum = 0.0f;
+
+            for (int k = 0; k < K; ++k) {
+
+                sum += shared_A[k] * shared_B[k];
+
+            }
+
+            C[n*M*L + m*L + l] = sum;
+
+        }
+
+        // Or, since K is a parameter, perhaps we can pass it as a parameter. 
+
+        Wait, but in the kernel, K is a template parameter. However, in the problem, K is fixed (2048). 
+
+        Wait, the problem's target architecture has fixed dimensions N=16, M=1024, K=2048, L=768. 
+
+        So the kernel can be specialized for these dimensions. 
+
+        Alternatively, the kernel can take K as a parameter. 
+
+        Let me adjust the kernel to not use a template, but instead pass K as an argument. 
+
+        So the kernel becomes:
+
+        __global__ void matmul3d_kernel(const float* A, const float* B, float* C, int N, int M, int K, int L) {
+
+            int blockId = blockIdx.x;
+
+            int n = blockId / M;
+
+            int m = blockId % M;
+
+            int l = threadIdx.x;
+
+            if (l >= L) return;
+
+            extern __shared__ float shared_data[];
+
+            float* shared_A = shared_data;
+
+            float* shared_B = shared_data + K;
+
+            // Load A_row into shared_A.
+
+            for (int k = threadIdx.x; k < K; k += blockDim.x) {
+
+                shared_A[k] = A[n*M*K + m*K + k];
+
+            }
+
+            // Load B_col into shared_B.
+
+            for (int k = threadIdx.x; k < K; k += blockDim.x) {
+
+                shared_B[k] = B[k*L + l];
+
+            }
+
+            __syncthreads();
+
+            float sum = 0.0f;
+
+            for (int k = 0; k < K; ++k) {
+
+                sum += shared_A[k] * shared_B[k];
+
+            }
+
+            C[n*M*L + m*L + l] = sum;
+
+        }
+
+        Now, the shared memory size is 2*K * sizeof(float). 
+
+        The host function must compute this dynamically. 
+
+        So in the host function:
+
+        auto K_val = A.size(2);
+
+        size_t shared_mem = 2 * K_val * sizeof(float);
+
+        Then, when launching the kernel, pass the K_val as an argument. 
+
+        Now, the host function code:
+
+        torch::Tensor matmul3d_cuda(torch::Tensor A, torch::Tensor B) {
+
+            CHECK(A.is_contiguous());
+
+            CHECK(B.is_contiguous());
+
+            int N = A.size(0);
+
+            int M = A.size(1);
+
+            int K = A.size(2);
+
+            int L = B.size(1);
+
+            auto C = torch::empty({N, M, L}, A.options());
+
+            dim3 blocks(N * M);
+
+            dim3 threads(L);
+
+            size_t shared_mem = 2 * K * sizeof(float);
+
+            matmul3d_kernel<<<blocks, threads, shared_mem, at::cuda::getCurrentCUDAStream()>>>(
+
+                A.data_ptr<float>(), B.data_ptr<float>(), C.data_ptr<float>(), N, M, K, L
+
+            );
+
+            return C;
+
+        }
+
+        Now, the CUDA kernel and host function are written. 
+
+        Now, the Python code needs to include this kernel. 
+
+        Following the example given, the Python code would have:
+
+        Imports: torch, torch.nn, load_inline.
+
+        The source code as a string.
+
+        The cpp_src with the function prototype.
+
+        Then, load_inline with the kernel.
+
+        The ModelNew class uses the loaded function.
+
+        Now, putting it all together:
+
+        The Python code would be:
+
+        ```python
+        import torch
+        import torch.nn as nn
+        from torch.utils.cpp_extension import load_inline
+
+        source = """
+        #include <torch/extension.h>
+        #include <cuda_runtime.h>
+
+        __global__ void matmul3d_kernel(const float* A, const float* B, float* C, int N, int M, int K, int L) {
+            int blockId = blockIdx.x;
+            int n = blockId / M;
+            int m = blockId % M;
+            int l = threadIdx.x;
+            if (l >= L) return;
+
+            extern __shared__ float shared_data[];
+            float* shared_A = shared_data;
+            float* shared_B = shared_data + K;
+
+            // Load A_row into shared_A.
+            for (int k = threadIdx.x; k < K; k += blockDim.x) {
+                shared_A[k] = A[n * M * K + m * K + k];
+            }
+
+            // Load B_col into shared_B.
+            for (int k = threadIdx.x; k < K; k += blockDim.x) {
+                shared_B[k] = B[k * L + l];
+            }
+
+            __syncthreads();
+
+            float sum = 0.0f;
+            for (int k = 0; k < K; ++k) {
+                sum += shared_A[k] * shared_B[k];
+            }
+
+            C[n * M * L + m * L + l] = sum;
+        }
+
+        torch::Tensor matmul3d_cuda(torch::Tensor A, torch::Tensor B) {
+            int N = A.size(0);
+            int M = A.size(1);
+            int K = A.size(2);
+            int L = B.size(1);
+
+            auto C = torch::empty({N, M, L}, A.options());
+
+            dim3 blocks(N * M);
+            dim3 threads(L);
+            size_t shared_mem = 2 * K * sizeof(float);
+
+            matmul3d_kernel<<<blocks, threads, shared_mem, at::cuda::getCurrentCUDAStream()>>>(
+                A.data_ptr<float>(), B.data_ptr<float>(), C.data_ptr<float>(), N, M, K, L
+            );
+
+            return C;
+        }
+        """
+
+        cpp_src = (
+            "torch::Tensor matmul3d_cuda(torch::Tensor A, torch::Tensor B);"
+        )
+
+        matmul3d = load_inline(
+            name="matmul3d",
+            cpp_sources=cpp_src,
+            cuda_sources=source,
+            functions=["matmul3d_cuda"],
+            verbose=True,
+            extra_cflags=["-O3"],
+            extra_ldflags=[""],
+        )
+
+        class ModelNew(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.matmul3d = matmul3d
+
+            def forward(self, A, B):
+                return self.matmul3d.matmul3d_cuda(A, B)
+        ```
+
+        Wait, but in the kernel code, the shared memory size is computed as 2*K * sizeof(float). However, in the CUDA kernel, the shared memory is declared as extern __shared__ float shared_data[], and the size is passed via the third argument of the kernel launch (shared_mem). 
+
+        This should work. 
+
+        Also, in the host function, the shared memory is correctly calculated. 
+
+        Now, checking the dimensions:
+
+        The block dimension is L=768 threads. 
+
+        The grid is N*M=16*1024=16384 blocks. 
+
+        The maximum number of threads per block is 1024, so 768 is okay. 
+
+        The shared memory per block is 2*2048*4 = 16KB, which is within the 64KB limit. 
+
+        The kernel should be correct. 
+
+        Now, the Python code must be written exactly as per the rules. 
+
+        Also, the original get_inputs() has N=16, M=1024, K=2048, L=768. 
+
+        The kernel should handle these dimensions. 
+
+        The code seems correct. 
+
+        Now, the final code is as above. 
+
+        However, in the host function, there are no error checks. But since the problem requires a runnable script, perhaps it's okay. 
+
+        Also, the kernel uses threadIdx.x up to L-1. Since L=768, and the block has 768 threads, this is okay. 
+
+        So the final code should be as written.
+</think>
+
+```python
+import torch
+import torch.nn as nn
+from torch.utils.cpp_extension import load_inline
+
+source = """
+#include <torch/extension.h>
+#include <cuda_runtime.h>
+
+__global__ void matmul3d_kernel(const float* A, const float* B, float* C, int N, int M, int K, int L) {
+    int blockId = blockIdx.x;
+    int n = blockId / M;
+    int m = blockId % M;
+    int l = threadIdx.x;
+    if (l >= L) return;
+
+    extern __shared__ float shared_data[];
+    float* shared_A = shared_data;
+    float* shared_B = shared_data + K;
+
+    // Load A_row into shared_A.
+    for (int k = threadIdx.x; k < K; k += blockDim.x) {
+        shared_A[k] = A[n * M * K + m * K + k];
+    }
+
+    // Load B_col into shared_B.
+    for (int k = threadIdx.x; k < K; k += blockDim.x) {
+        shared_B[k] = B[k * L + l];
+    }
+
+    __syncthreads();
+
+    float sum = 0.0f;
+    for (int k = 0; k < K; ++k) {
+        sum += shared_A[k] * shared_B[k];
+    }
+
+    C[n * M * L + m * L + l] = sum;
+}
+
+torch::Tensor matmul3d_cuda(torch::Tensor A, torch::Tensor B) {
+    int N = A.size(0);
+    int M = A.size(1);
+    int K = A.size(2);
+    int L = B.size(1);
+
+    auto C = torch::empty({N, M, L}, A.options());
+
+    dim3 blocks(N * M);
+    dim3 threads(L);
+    size_t shared_mem = 2 * K * sizeof(float);
+
+    matmul3d_kernel<<<blocks, threads, shared_mem, at::cuda::getCurrentCUDAStream()>>>(
+        A.data_ptr<float>(), B.data_ptr<float>(), C.data_ptr<float>(), N, M, K, L
+    );
+
+    return C;
+}
+"""
+
+cpp_src = (
+    "torch::Tensor matmul3d_cuda(torch::Tensor A, torch::Tensor B);"
+)
+
+matmul3d = load_inline(
+    name="matmul3d",
+    cpp_sources=cpp_src,
+    cuda_sources=source,
+    functions=["matmul3d_cuda"],
+    verbose=True,
+    extra_cflags=["-O3"],
+    extra_ldflags=[""],
+)
+
+class ModelNew(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.matmul3d = matmul3d
+
+    def forward(self, A, B):
+        return self.matmul3d.matmul3d_cuda(A, B)
+```
